@@ -61,6 +61,20 @@ CREATE TABLE IF NOT EXISTS play_history (
     played_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_play_history_item ON play_history(item_type, item_id, played_at);
+
+CREATE TABLE IF NOT EXISTS program_log (
+    id INTEGER PRIMARY KEY,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    item_type TEXT NOT NULL CHECK (item_type IN ('episode', 'ad', 'bumper', 'off_air')),
+    item_id INTEGER,
+    block_name TEXT,
+    event_name TEXT,
+    status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'played', 'skipped')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_program_log_start ON program_log(start_time);
+CREATE INDEX IF NOT EXISTS idx_program_log_item ON program_log(item_type, item_id, start_time);
 """
 
 
