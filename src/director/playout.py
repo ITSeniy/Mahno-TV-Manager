@@ -12,6 +12,8 @@ current, which is also exactly the hard-cutover behavior wanted for the
 import sqlite3
 from datetime import datetime
 
+from director.ntsc_render import is_render_valid
+
 _ITEM_TABLES = {"episode": "episodes", "ad": "ads", "bumper": "bumpers"}
 
 
@@ -23,12 +25,24 @@ def find_current_row(conn: sqlite3.Connection, now_utc: datetime) -> sqlite3.Row
     ).fetchone()
 
 
-def resolve_media_path(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
+def resolve_media_path(conn: sqlite3.Connection, row: sqlite3.Row) -> tuple[str | None, bool]:
+    """Returns (path_to_play, is_ntsc_rendered). This is a read-only lookup -
+    it never triggers a render itself (see ntsc_render.py for why: a single
+    render can take minutes, far too slow for the live poll loop). If
+    nothing's been pre-rendered yet, it just returns the raw source path
+    with is_ntsc_rendered=False, so the caller can fall back to the live
+    obs-retro-effects filters for that item instead."""
     table = _ITEM_TABLES.get(row["item_type"])
     if table is None:  # off_air
-        return None
-    result = conn.execute(f"SELECT file_path FROM {table} WHERE id = ?", (row["item_id"],)).fetchone()
-    return result["file_path"] if result else None
+        return None, False
+
+    result = conn.execute(f"SELECT * FROM {table} WHERE id = ?", (row["item_id"],)).fetchone()
+    if result is None:
+        return None, False
+
+    if is_render_valid(result):
+        return result["rendered_path"], True
+    return result["file_path"], False
 
 
 def advance_status(conn: sqlite3.Connection, previous_row_id: int | None, now_utc: datetime) -> None:

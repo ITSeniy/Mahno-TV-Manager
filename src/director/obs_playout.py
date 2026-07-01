@@ -12,6 +12,8 @@ hardcoded.
 
 import obsws_python as obsws
 
+from director.vhs_effect import NTSC_FILTER_NAME, VHS_FILTER_NAME
+
 ON_AIR_SCENE = "ON_AIR"
 OFF_AIR_SCENE = "OFF_AIR"
 MEDIA_SOURCE = "program_player"
@@ -109,11 +111,21 @@ def ensure_scenes(client: obsws.ReqClient) -> None:
         )
 
 
-def apply_item(client: obsws.ReqClient, item_type: str, file_path: str | None) -> None:
+def apply_item(client: obsws.ReqClient, item_type: str, file_path: str | None, is_ntsc_rendered: bool) -> None:
     if item_type == "off_air":
         client.set_current_program_scene(OFF_AIR_SCENE)
         return
 
     client.set_input_settings(MEDIA_SOURCE, {"local_file": file_path, "is_local_file": True}, True)
     client.trigger_media_input_action(MEDIA_SOURCE, RESTART_ACTION)
+    # ntsc-rs (offline pre-render, see ntsc_render.py) already baked the
+    # analog VHS/NTSC look into this file if is_ntsc_rendered is True -
+    # leaving the live filters on top would double-degrade the image. They
+    # stay enabled only as a fallback for files that haven't been
+    # pre-rendered yet, so nothing airs completely undegraded.
+    # ensure_vhs_effect (vhs_effect.py) attaches these filters to the ON_AIR
+    # *scene*, not the program_player source - toggling them on the wrong
+    # object 600s with "no filter found".
+    for filter_name in (NTSC_FILTER_NAME, VHS_FILTER_NAME):
+        client.set_source_filter_enabled(ON_AIR_SCENE, filter_name, not is_ntsc_rendered)
     client.set_current_program_scene(ON_AIR_SCENE)

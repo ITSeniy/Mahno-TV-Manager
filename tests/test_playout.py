@@ -60,13 +60,45 @@ def test_resolve_media_path_for_each_item_type(tmp_path):
     ep_row = conn.execute(
         "SELECT ? AS item_type, ? AS item_id", ("episode", ep_id)
     ).fetchone()
-    assert resolve_media_path(conn, ep_row) == "/library/ep1.mkv"
+    assert resolve_media_path(conn, ep_row) == ("/library/ep1.mkv", False)
 
     ad_row = conn.execute("SELECT ? AS item_type, ? AS item_id", ("ad", ad_id)).fetchone()
-    assert resolve_media_path(conn, ad_row) == "/ads/a.mp4"
+    assert resolve_media_path(conn, ad_row) == ("/ads/a.mp4", False)
 
     off_air_row = conn.execute("SELECT 'off_air' AS item_type, NULL AS item_id").fetchone()
-    assert resolve_media_path(conn, off_air_row) is None
+    assert resolve_media_path(conn, off_air_row) == (None, False)
+
+
+def test_resolve_media_path_prefers_a_valid_ntsc_rs_render(tmp_path, monkeypatch):
+    conn = make_db(tmp_path)
+    ep_id = add_episode(conn, "/library/ep1.mkv")
+
+    rendered_path = tmp_path / "rendered.mp4"
+    rendered_path.write_bytes(b"fake")
+    row = conn.execute("SELECT file_mtime, file_size FROM episodes WHERE id = ?", (ep_id,)).fetchone()
+    conn.execute(
+        "UPDATE episodes SET rendered_path = ?, rendered_source_mtime = ?, rendered_source_size = ? WHERE id = ?",
+        (str(rendered_path), row["file_mtime"], row["file_size"], ep_id),
+    )
+
+    ep_row = conn.execute("SELECT ? AS item_type, ? AS item_id", ("episode", ep_id)).fetchone()
+    assert resolve_media_path(conn, ep_row) == (str(rendered_path), True)
+
+
+def test_resolve_media_path_falls_back_to_raw_when_render_is_stale(tmp_path):
+    conn = make_db(tmp_path)
+    ep_id = add_episode(conn, "/library/ep1.mkv")
+
+    rendered_path = tmp_path / "rendered.mp4"
+    rendered_path.write_bytes(b"fake")
+    # A stale mtime/size means the source changed since it was last rendered.
+    conn.execute(
+        "UPDATE episodes SET rendered_path = ?, rendered_source_mtime = 0, rendered_source_size = 0 WHERE id = ?",
+        (str(rendered_path), ep_id),
+    )
+
+    ep_row = conn.execute("SELECT ? AS item_type, ? AS item_id", ("episode", ep_id)).fetchone()
+    assert resolve_media_path(conn, ep_row) == ("/library/ep1.mkv", False)
 
 
 def test_advance_status_marks_elapsed_previous_row_as_played_and_logs_history(tmp_path):

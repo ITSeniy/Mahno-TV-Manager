@@ -23,6 +23,9 @@ class Config:
     dashboard_port: int
     active_series: list[str] | None
     random_rotation_series: list[str]
+    ntsc_rs_cli_path: Path | None
+    ntsc_rs_settings_path: Path | None
+    ntsc_render_cache_dir: Path | None
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":
@@ -34,6 +37,9 @@ class Config:
         raw = json.loads(path.read_text(encoding="utf-8"))
         logo_path = raw.get("logo_path")
         active_series = raw.get("active_series")
+        ntsc_rs_cli_path = raw.get("ntsc_rs_cli_path")
+        ntsc_rs_settings_path = raw.get("ntsc_rs_settings_path")
+        ntsc_render_cache_dir = raw.get("ntsc_render_cache_dir")
         return cls(
             series_root=Path(raw["series_root"]),
             ads_root=Path(raw["ads_root"]),
@@ -44,6 +50,9 @@ class Config:
             dashboard_port=int(raw.get("dashboard_port", 8766)),
             active_series=list(active_series) if active_series is not None else None,
             random_rotation_series=list(raw.get("random_rotation_series", [])),
+            ntsc_rs_cli_path=Path(ntsc_rs_cli_path) if ntsc_rs_cli_path else None,
+            ntsc_rs_settings_path=Path(ntsc_rs_settings_path) if ntsc_rs_settings_path else None,
+            ntsc_render_cache_dir=Path(ntsc_render_cache_dir) if ntsc_render_cache_dir else None,
         )
 
 

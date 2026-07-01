@@ -17,10 +17,13 @@ from director.obs_playout import (
     apply_item,
     ensure_scenes,
 )
+from director.vhs_effect import NTSC_FILTER_NAME, VHS_FILTER_NAME
 
 
 class FakeObsClient:
-    def __init__(self, existing_scenes=(), existing_inputs=(), base_width=720, base_height=576):
+    def __init__(
+        self, existing_scenes=(), existing_inputs=(), base_width=720, base_height=576, existing_filters=()
+    ):
         self.scenes = list(existing_scenes)
         self.inputs = list(existing_inputs)
         self.calls = []
@@ -30,6 +33,14 @@ class FakeObsClient:
         self.base_height = base_height
         self.transforms = {}  # scene_item_id -> transform dict
         self.item_ids = {}  # input_name -> scene_item_id
+        self.filter_enabled = {}  # (source_name, filter_name) -> bool
+        # (source_name, filter_name) pairs that "exist" in this fake OBS -
+        # real OBS errors (code 600) if you try to enable/disable a filter
+        # on a source it isn't actually attached to, which is exactly the
+        # bug a live smoke test caught (toggling filters on program_player
+        # when ensure_vhs_effect actually attaches them to the ON_AIR scene)
+        # - a client that silently accepted any pair wouldn't have caught it.
+        self.existing_filters = set(existing_filters)
         self._next_item_id = 1
         for existing in self.inputs:
             self.item_ids[existing] = self._next_item_id
@@ -74,6 +85,15 @@ class FakeObsClient:
 
     def trigger_media_input_action(self, name, action):
         self.calls.append(("trigger_media_input_action", name, action))
+
+    def set_source_filter_enabled(self, source_name, filter_name, enabled):
+        if (source_name, filter_name) not in self.existing_filters:
+            raise RuntimeError(
+                f"Request SetSourceFilterEnabled returned code 600. With message: "
+                f"No filter was found in the source `{source_name}` with the name `{filter_name}`."
+            )
+        self.calls.append(("set_source_filter_enabled", source_name, filter_name, enabled))
+        self.filter_enabled[(source_name, filter_name)] = enabled
 
     def set_current_program_scene(self, name):
         self.calls.append(("set_current_program_scene", name))
@@ -146,9 +166,12 @@ def test_ensure_scenes_raises_clear_error_when_no_matching_kind_exists():
         ensure_scenes(client)
 
 
+_NTSC_VHS_FILTERS_ON_ON_AIR_SCENE = {(ON_AIR_SCENE, NTSC_FILTER_NAME), (ON_AIR_SCENE, VHS_FILTER_NAME)}
+
+
 def test_apply_item_for_episode_sets_file_restarts_and_switches_to_on_air():
-    client = FakeObsClient()
-    apply_item(client, "episode", "/library/show/e1.mkv")
+    client = FakeObsClient(existing_filters=_NTSC_VHS_FILTERS_ON_ON_AIR_SCENE)
+    apply_item(client, "episode", "/library/show/e1.mkv", True)
 
     assert client.input_settings[MEDIA_SOURCE] == {"local_file": "/library/show/e1.mkv", "is_local_file": True}
     assert ("trigger_media_input_action", MEDIA_SOURCE, RESTART_ACTION) in client.calls
@@ -157,8 +180,36 @@ def test_apply_item_for_episode_sets_file_restarts_and_switches_to_on_air():
 
 def test_apply_item_for_off_air_switches_scene_without_touching_media_source():
     client = FakeObsClient()
-    apply_item(client, "off_air", None)
+    apply_item(client, "off_air", None, True)
 
     assert client.current_scene == OFF_AIR_SCENE
     assert MEDIA_SOURCE not in client.input_settings
     assert not any(c[0] == "trigger_media_input_action" for c in client.calls)
+
+
+def test_apply_item_disables_live_ntsc_vhs_filters_when_ntsc_rs_already_rendered():
+    # ensure_vhs_effect (vhs_effect.py) attaches these filters to the
+    # ON_AIR scene, not the program_player source - toggling the wrong one
+    # is exactly the bug a live-OBS smoke test caught (the fake client here
+    # doesn't reject an unknown source/filter pair the way real OBS does,
+    # so this assertion on the *target* is what actually guards against it).
+    client = FakeObsClient(existing_filters=_NTSC_VHS_FILTERS_ON_ON_AIR_SCENE)
+    apply_item(client, "episode", "/cache/episode/1.mp4", True)
+
+    assert client.filter_enabled[(ON_AIR_SCENE, NTSC_FILTER_NAME)] is False
+    assert client.filter_enabled[(ON_AIR_SCENE, VHS_FILTER_NAME)] is False
+
+
+def test_apply_item_enables_live_ntsc_vhs_filters_as_fallback_when_not_rendered():
+    client = FakeObsClient(existing_filters=_NTSC_VHS_FILTERS_ON_ON_AIR_SCENE)
+    apply_item(client, "episode", "/library/show/e1.mkv", False)
+
+    assert client.filter_enabled[(ON_AIR_SCENE, NTSC_FILTER_NAME)] is True
+    assert client.filter_enabled[(ON_AIR_SCENE, VHS_FILTER_NAME)] is True
+
+
+def test_apply_item_for_off_air_does_not_touch_ntsc_vhs_filters():
+    client = FakeObsClient()
+    apply_item(client, "off_air", None, True)
+
+    assert client.filter_enabled == {}

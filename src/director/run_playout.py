@@ -46,12 +46,13 @@ def main() -> None:
         if row is None:
             if current_row_id is not None:
                 print(f"{now.isoformat()}: нет сгенерированной сетки на текущий момент - ухожу на off-air")
-            apply_item(client, "off_air", None)
+            apply_item(client, "off_air", None, True)
             current_row_id = None
         elif row["id"] != current_row_id:
-            path = resolve_media_path(conn, row)
-            print(f"{now.isoformat()}: -> {row['item_type']} #{row['item_id']} [{row['block_name']}] {path or ''}")
-            apply_item(client, row["item_type"], path)
+            path, is_ntsc_rendered = resolve_media_path(conn, row)
+            source_tag = "ntsc-rs" if is_ntsc_rendered else "raw+live-filters"
+            print(f"{now.isoformat()}: -> {row['item_type']} #{row['item_id']} [{row['block_name']}] ({source_tag}) {path or ''}")
+            apply_item(client, row["item_type"], path, is_ntsc_rendered)
             current_row_id = row["id"]
 
         time.sleep(POLL_INTERVAL_SECONDS)

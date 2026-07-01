@@ -25,7 +25,10 @@ CREATE TABLE IF NOT EXISTS episodes (
     file_mtime REAL,
     file_size INTEGER,
     scanned_at TEXT NOT NULL,
-    missing INTEGER NOT NULL DEFAULT 0
+    missing INTEGER NOT NULL DEFAULT 0,
+    rendered_path TEXT,
+    rendered_source_mtime REAL,
+    rendered_source_size INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_episodes_series ON episodes(series_id, season, episode);
 
@@ -39,7 +42,10 @@ CREATE TABLE IF NOT EXISTS ads (
     file_mtime REAL,
     file_size INTEGER,
     scanned_at TEXT NOT NULL,
-    missing INTEGER NOT NULL DEFAULT 0
+    missing INTEGER NOT NULL DEFAULT 0,
+    rendered_path TEXT,
+    rendered_source_mtime REAL,
+    rendered_source_size INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS bumpers (
@@ -52,7 +58,10 @@ CREATE TABLE IF NOT EXISTS bumpers (
     file_mtime REAL,
     file_size INTEGER,
     scanned_at TEXT NOT NULL,
-    missing INTEGER NOT NULL DEFAULT 0
+    missing INTEGER NOT NULL DEFAULT 0,
+    rendered_path TEXT,
+    rendered_source_mtime REAL,
+    rendered_source_size INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS play_history (
@@ -94,6 +103,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
     series_cols = {row["name"] for row in conn.execute("PRAGMA table_info(series)")}
     if "rotation_mode" not in series_cols:
         conn.execute("ALTER TABLE series ADD COLUMN rotation_mode TEXT NOT NULL DEFAULT 'sequential'")
+
+    for table in ("episodes", "ads", "bumpers"):
+        cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if "rendered_path" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN rendered_path TEXT")
+        if "rendered_source_mtime" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN rendered_source_mtime REAL")
+        if "rendered_source_size" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN rendered_source_size INTEGER")
+
     conn.commit()
 
 
