@@ -38,12 +38,13 @@ def build_rich_library(conn):
 
 
 def build_sparse_library(conn):
-    """Only one series and no ads/bumpers at all. The rotation cursor still
-    cycles the same 2 episodes indefinitely (that's correct - a rerun channel
-    with a tiny library just repeats what it has), but with no filler content
-    available this exercises the path where ad breaks and the final padding
-    loop toward 05:00 have nothing to insert."""
-    conn.execute("INSERT INTO series (name, root_path) VALUES ('Only Show', '/only')")
+    """Only one series and no ads/bumpers at all. Random mode (not the
+    'sequential' default) so the daily premiere cap doesn't apply and the
+    rotation cursor keeps cycling the same 2 episodes indefinitely (that's
+    correct - a rerun channel with a tiny library just repeats what it has);
+    with no filler content available this exercises the path where ad
+    breaks and the final padding loop toward 05:00 have nothing to insert."""
+    conn.execute("INSERT INTO series (name, root_path, rotation_mode) VALUES ('Only Show', '/only', 'random')")
     series_id = conn.execute("SELECT id FROM series WHERE name = 'Only Show'").fetchone()["id"]
     for ep in range(1, 3):
         conn.execute(
@@ -220,3 +221,64 @@ def test_double_ad_in_happens_sometimes_but_not_always(tmp_path, monkeypatch):
     monkeypatch.setattr("director.scheduler.random.random", lambda: 0.99)
     generate_day(conn2, date(2026, 7, 6))
     assert count_consecutive_ad_in_pairs(conn2) == 0
+
+
+def test_premiere_series_air_at_most_once_per_day(tmp_path):
+    # build_rich_library's 5 series are all 'sequential' (the schema default) -
+    # a perfect bed for checking the daily cap end to end.
+    conn = db.connect(tmp_path / "lib.db")
+    build_rich_library(conn)
+
+    generate_day(conn, date(2026, 7, 6))
+
+    counts = conn.execute(
+        """
+        SELECT s.name, COUNT(*) AS airings FROM program_log pl
+        JOIN episodes e ON e.id = pl.item_id
+        JOIN series s ON s.id = e.series_id
+        WHERE pl.item_type = 'episode'
+        GROUP BY s.id
+        """
+    ).fetchall()
+
+    assert len(counts) == 5  # every series still gets its one daily slot
+    assert all(row["airings"] == 1 for row in counts)
+
+
+def test_random_series_are_not_subject_to_the_premiere_cap(tmp_path):
+    conn = db.connect(tmp_path / "lib.db")
+    build_rich_library(conn)
+    conn.execute("UPDATE series SET rotation_mode = 'random'")
+    conn.commit()
+
+    generate_day(conn, date(2026, 7, 6))
+
+    counts = conn.execute(
+        "SELECT COUNT(*) AS c FROM program_log WHERE item_type = 'episode'"
+    ).fetchone()
+    assert counts["c"] > 5  # far more than one slot each once the cap doesn't apply
+
+
+def test_interstitial_is_not_inserted_between_every_program(tmp_path):
+    """The bumper should only show up as a last-resort filler (via
+    build_filler, when no episode fits the remaining time), not routinely
+    between every program-to-program transition."""
+    conn = db.connect(tmp_path / "lib.db")
+    build_rich_library(conn)
+    conn.execute("UPDATE series SET rotation_mode = 'random'")  # plenty of content, no premiere cap in the way
+    conn.commit()
+
+    generate_day(conn, date(2026, 7, 6))
+
+    rows = conn.execute(
+        "SELECT pl.item_type, b.kind FROM program_log pl "
+        "LEFT JOIN bumpers b ON b.id = pl.item_id AND pl.item_type = 'bumper' "
+        "ORDER BY pl.start_time"
+    ).fetchall()
+
+    episode_to_episode_transitions = sum(
+        1 for prev, nxt in zip(rows, rows[1:]) if prev["item_type"] == "episode" and nxt["item_type"] == "episode"
+    )
+    # With abundant, evenly-sized content, most episodes should butt directly
+    # against the next one - interstitials should be rare, not the norm.
+    assert episode_to_episode_transitions > 0

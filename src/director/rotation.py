@@ -9,11 +9,19 @@ like a real rerun rotation instead of a fixed loop.
 
 Which SERIES gets the next slot (independent of the mode above) is
 round-robin by "longest since last aired", skipping a series that would
-break the max-consecutive-same-series rule for the current block.
+break the max-consecutive-same-series rule for the current block. Sequential
+("premiere") series are additionally capped to MAX_PREMIERE_AIRINGS_PER_DAY -
+plain round-robin gives every series roughly equal turns regardless of
+catalog size, which burns through a 12-13 episode premiere series in 2-3
+days and undercuts the whole point of it being a premiere rather than a
+rerun. Random-mode series have no such cap; cycling through them faster is
+exactly what a rerun rotation is for.
 """
 
 import random
 import sqlite3
+
+MAX_PREMIERE_AIRINGS_PER_DAY = 1
 
 
 def series_episode_order(conn: sqlite3.Connection, series_id: int) -> list[sqlite3.Row]:
@@ -87,7 +95,36 @@ def next_episode_for_series(conn: sqlite3.Connection, series_id: int) -> sqlite3
     return _next_sequential_episode(order, last_id)
 
 
-def _series_allowed(series_id: int, recent_series_window: list[int], max_consecutive: int) -> bool:
+def _series_rotation_mode(conn: sqlite3.Connection, series_id: int) -> str:
+    row = conn.execute("SELECT rotation_mode FROM series WHERE id = ?", (series_id,)).fetchone()
+    return row["rotation_mode"] if row is not None else "sequential"
+
+
+def _daily_airing_count(conn: sqlite3.Connection, series_id: int, day_start_iso: str) -> int:
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS c FROM program_log pl
+        JOIN episodes e ON e.id = pl.item_id
+        WHERE pl.item_type = 'episode' AND e.series_id = ? AND pl.start_time >= ?
+        """,
+        (series_id, day_start_iso),
+    ).fetchone()
+    return row["c"]
+
+
+def _under_daily_cap(conn: sqlite3.Connection, series_id: int, day_start_iso: str | None) -> bool:
+    """Hard exclusion, unlike _consecutive_allowed below - a premiere series
+    that's already had its one airing today must NOT be let back in by the
+    relax-if-everything's-excluded fallback. Letting the cap relax would
+    defeat the entire point of it (that fallback exists so an unrelated
+    formatting rule like max-consecutive doesn't ever deadlock the picker,
+    not so a daily quota can be bypassed under pressure)."""
+    if day_start_iso is None or _series_rotation_mode(conn, series_id) != "sequential":
+        return True
+    return _daily_airing_count(conn, series_id, day_start_iso) < MAX_PREMIERE_AIRINGS_PER_DAY
+
+
+def _consecutive_allowed(series_id: int, recent_series_window: list[int], max_consecutive: int) -> bool:
     if max_consecutive <= 0 or len(recent_series_window) < max_consecutive:
         return True
     tail = recent_series_window[-max_consecutive:]
@@ -99,9 +136,14 @@ def pick_next_series(
     eligible_series_ids: list[int],
     recent_series_window: list[int],
     max_consecutive: int,
+    day_start_iso: str | None = None,
 ) -> int | None:
-    allowed = [s for s in eligible_series_ids if _series_allowed(s, recent_series_window, max_consecutive)]
-    pool = allowed or eligible_series_ids  # relax the rule rather than deadlock if everything's excluded
+    under_cap = [s for s in eligible_series_ids if _under_daily_cap(conn, s, day_start_iso)]
+    if not under_cap:
+        return None  # every remaining candidate has used up today's premiere quota - no relax
+
+    allowed = [s for s in under_cap if _consecutive_allowed(s, recent_series_window, max_consecutive)]
+    pool = allowed or under_cap  # relax only the consecutive-repeat rule, never the daily cap
     if not pool:
         return None
     return min(pool, key=lambda sid: (last_aired_time(conn, sid), sid))
@@ -113,15 +155,20 @@ def pick_next_episode(
     max_duration_seconds: float,
     recent_series_window: list[int],
     max_consecutive: int,
+    day_start_iso: str | None = None,
 ) -> sqlite3.Row | None:
     """Round-robins across eligible series (oldest-last-aired first) and returns
     the first candidate whose next episode fits max_duration_seconds. Series
     whose next episode doesn't fit, or that have no watchable episodes at
-    all, are skipped in favor of the next one in priority order."""
+    all, are skipped in favor of the next one in priority order.
+
+    day_start_iso: start of the current broadcast day (ISO string), used to
+    enforce MAX_PREMIERE_AIRINGS_PER_DAY for sequential series. None disables
+    the cap entirely (e.g. for tests that don't care about it)."""
     tried: set[int] = set()
     while len(tried) < len(eligible_series_ids):
         remaining_pool = [s for s in eligible_series_ids if s not in tried]
-        series_id = pick_next_series(conn, remaining_pool, recent_series_window, max_consecutive)
+        series_id = pick_next_series(conn, remaining_pool, recent_series_window, max_consecutive, day_start_iso)
         if series_id is None:
             return None
         tried.add(series_id)

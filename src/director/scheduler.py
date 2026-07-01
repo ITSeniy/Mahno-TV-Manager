@@ -102,6 +102,7 @@ def _fill_block(
     block_end: datetime,
     eligible_series_ids: list[int],
     event_name: str | None,
+    day_start_iso: str,
 ) -> datetime:
     recent_series_window: list[int] = []
     last_ad_break = current_time
@@ -111,8 +112,14 @@ def _fill_block(
         if remaining <= MIN_SEGMENT_SECONDS:
             break
 
-        episode = pick_next_episode(conn, eligible_series_ids, remaining, recent_series_window, block.max_consecutive_same_series)
+        episode = pick_next_episode(
+            conn, eligible_series_ids, remaining, recent_series_window, block.max_consecutive_same_series, day_start_iso
+        )
         if episode is None:
+            # Nothing fits (or every premiere series has already hit today's
+            # cap and nothing random is due either) - this is the "director
+            # genuinely can't fill it any other way" case, so fall back to
+            # ads/an interstitial rather than leave dead air.
             filler = build_filler(conn, remaining, current_time)
             for kind, item in filler:
                 current_time = _write_log(conn, current_time, kind, item, block.name, event_name)
@@ -121,21 +128,11 @@ def _fill_block(
         current_time = _write_log(conn, current_time, "episode", episode, block.name, event_name)
         recent_series_window.append(episode["series_id"])
 
-        did_break = False
         elapsed_since_break = (current_time - last_ad_break).total_seconds()
         if elapsed_since_break >= block.ad_break_every_minutes * 60:
             current_time, did_break = _insert_ad_break(conn, current_time, block_end, block, event_name)
             if did_break:
                 last_ad_break = current_time
-
-        if not did_break:
-            # Generic "you're watching X" bumper between programs, independent
-            # of ad breaks - what REN TV's era called a "bezrazmerka".
-            remaining_for_bumper = (block_end - current_time).total_seconds()
-            if remaining_for_bumper > MIN_SEGMENT_SECONDS:
-                interstitial = pick_bumper(conn, kind="interstitial", max_duration=remaining_for_bumper)
-                if interstitial is not None:
-                    current_time = _write_log(conn, current_time, "bumper", interstitial, block.name, event_name)
 
     return current_time
 
@@ -152,6 +149,7 @@ def generate_day(conn: sqlite3.Connection, broadcast_date: date) -> int:
     rows_before = conn.execute("SELECT COUNT(*) AS c FROM program_log").fetchone()["c"]
 
     current_time = combine_msk(broadcast_date, OFF_AIR_END)
+    day_start_iso = current_time.isoformat()
 
     for block in blocks:
         end_date = broadcast_date if block.end > block.start else broadcast_date + timedelta(days=1)
@@ -160,7 +158,7 @@ def generate_day(conn: sqlite3.Connection, broadcast_date: date) -> int:
             continue  # earlier blocks already drifted past this one's window entirely
 
         eligible = [sid for sid in series_ids if block.series_filter is None or series_names[sid] in block.series_filter]
-        current_time = _fill_block(conn, block, current_time, block_end, eligible, event_name)
+        current_time = _fill_block(conn, block, current_time, block_end, eligible, event_name, day_start_iso)
 
     off_air_start_nominal = combine_msk(broadcast_date + timedelta(days=1), OFF_AIR_START)
 

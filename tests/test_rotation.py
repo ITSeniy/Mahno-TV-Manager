@@ -135,3 +135,69 @@ def test_sequential_mode_is_unaffected_by_rotation_mode_default(tmp_path):
     assert next_episode_for_series(conn, a)["id"] == ep1
     log_aired(conn, ep1, "2026-07-01T10:00:00+00:00")
     assert next_episode_for_series(conn, a)["episode"] == 2
+
+
+DAY_START = "2026-07-06T07:00:00+00:00"  # 10:00 MSK
+
+
+def test_premiere_series_is_skipped_once_it_hits_the_daily_cap(tmp_path):
+    conn = make_db(tmp_path)
+    premiere = add_series(conn, "Premiere Show", rotation_mode="sequential")
+    rerun = add_series(conn, "Rerun Show", rotation_mode="random")
+    premiere_ep1 = add_episode(conn, premiere, 1, 1)
+    add_episode(conn, premiere, 1, 2)
+    add_episode(conn, rerun, 1, 1)
+
+    log_aired(conn, premiere_ep1, DAY_START)  # premiere already aired once today
+
+    pick = pick_next_episode(
+        conn, [premiere, rerun], 9999, recent_series_window=[], max_consecutive=5, day_start_iso=DAY_START
+    )
+    assert pick["series_id"] == rerun  # premiere is capped out for today, rerun has no such limit
+
+
+def test_premiere_series_is_eligible_again_the_next_day(tmp_path):
+    conn = make_db(tmp_path)
+    premiere = add_series(conn, "Premiere Show", rotation_mode="sequential")
+    rerun = add_series(conn, "Rerun Show", rotation_mode="random")
+    premiere_ep1 = add_episode(conn, premiere, 1, 1)
+    rerun_ep1 = add_episode(conn, rerun, 1, 1)
+
+    # Both aired yesterday, rerun more recently, so premiere is legitimately
+    # "more overdue" by the round-robin ordering once the cap no longer blocks it.
+    log_aired(conn, premiere_ep1, "2026-07-05T18:00:00+00:00")
+    log_aired(conn, rerun_ep1, "2026-07-05T20:00:00+00:00")
+
+    pick = pick_next_episode(
+        conn, [premiere, rerun], 9999, recent_series_window=[], max_consecutive=5, day_start_iso=DAY_START
+    )
+    assert pick["series_id"] == premiere  # yesterday's airing doesn't count against today's cap
+
+
+def test_random_series_has_no_daily_cap(tmp_path):
+    conn = make_db(tmp_path)
+    rerun = add_series(conn, "Rerun Show", rotation_mode="random")
+    ep1 = add_episode(conn, rerun, 1, 1)
+    add_episode(conn, rerun, 1, 2)
+    add_episode(conn, rerun, 1, 3)
+
+    for _ in range(5):
+        log_aired(conn, ep1, DAY_START)
+
+    pick = pick_next_episode(
+        conn, [rerun], 9999, recent_series_window=[], max_consecutive=5, day_start_iso=DAY_START
+    )
+    assert pick is not None  # not excluded just because it's already aired several times today
+
+
+def test_day_start_none_disables_the_cap_entirely(tmp_path):
+    conn = make_db(tmp_path)
+    premiere = add_series(conn, "Premiere Show", rotation_mode="sequential")
+    ep1 = add_episode(conn, premiere, 1, 1)
+    add_episode(conn, premiere, 1, 2)
+    log_aired(conn, ep1, DAY_START)
+
+    pick = pick_next_episode(
+        conn, [premiere], 9999, recent_series_window=[], max_consecutive=5, day_start_iso=None
+    )
+    assert pick is not None  # no day_start_iso -> cap not enforced (back-compat default)
