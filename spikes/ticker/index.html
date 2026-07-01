@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Ticker POC</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+  }
+  .ticker-bar {
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    height: 60px;
+    background: linear-gradient(to bottom, #003366, #0055aa 60%, #003366);
+    border-top: 3px solid #ffcc00;
+    display: flex;
+    align-items: center;
+    box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.5);
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  .ticker-track {
+    display: flex;
+    white-space: nowrap;
+    animation-name: scroll;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    animation-duration: var(--duration, 30s);
+  }
+  .ticker-item {
+    display: inline-flex;
+    align-items: center;
+    color: #fff;
+    font-weight: bold;
+    font-size: 28px;
+    text-shadow: 2px 2px 2px #000;
+    padding-right: 80px;
+  }
+  .ticker-item::before {
+    content: "\25CF";
+    color: #ffcc00;
+    margin-right: 20px;
+    font-size: 16px;
+  }
+  @keyframes scroll {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+</style>
+</head>
+<body>
+  <div class="ticker-bar">
+    <div class="ticker-track" id="track"></div>
+  </div>
+
+  <script src="lines.js"></script>
+  <script>
+    const track = document.getElementById("track");
+
+    function makeItem(text) {
+      const span = document.createElement("span");
+      span.className = "ticker-item";
+      span.textContent = text;
+      return span;
+    }
+
+    // Content is duplicated so translateX(-50%) loops seamlessly.
+    for (let rep = 0; rep < 2; rep++) {
+      TICKER_LINES.forEach((line) => track.appendChild(makeItem(line)));
+    }
+
+    // Scroll duration scales with text length so speed (px/s) stays roughly constant.
+    const totalChars = TICKER_LINES.join("").length;
+    const duration = Math.max(20, totalChars * 0.25);
+    track.style.setProperty("--duration", duration + "s");
+  </script>
+</body>
+</html>
