@@ -20,6 +20,7 @@ class Config:
     db_path: Path
     logo_path: Path | None
     ticker_port: int
+    active_series: list[str] | None
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":
@@ -30,6 +31,7 @@ class Config:
             )
         raw = json.loads(path.read_text(encoding="utf-8"))
         logo_path = raw.get("logo_path")
+        active_series = raw.get("active_series")
         return cls(
             series_root=Path(raw["series_root"]),
             ads_root=Path(raw["ads_root"]),
@@ -37,6 +39,7 @@ class Config:
             db_path=Path(raw.get("db_path", REPO_ROOT / "data" / "library.db")),
             logo_path=Path(logo_path) if logo_path else None,
             ticker_port=int(raw.get("ticker_port", 8765)),
+            active_series=list(active_series) if active_series is not None else None,
         )
 
 

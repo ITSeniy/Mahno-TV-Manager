@@ -4,9 +4,32 @@ Usage:
     .venv/Scripts/python.exe -m director.scan_library
 """
 
+from pathlib import Path
+
 from director import db
 from director.config import Config
 from director.scanner import ScanStats, scan_flat_root, scan_series_root
+
+
+def classify_ad(path: Path) -> str | None:
+    """Used only when ads_root and bumpers_root are the same folder: a file
+    only counts as an ad if it isn't named like one of the bumper kinds."""
+    name = path.stem.lower()
+    if name.startswith(("ad-in", "ad-out", "bumper")):
+        return None
+    return "general"
+
+
+def classify_bumper(path: Path) -> str | None:
+    """Counterpart to classify_ad for the shared-folder case."""
+    name = path.stem.lower()
+    if name.startswith("ad-in"):
+        return "ad_in"
+    if name.startswith("ad-out"):
+        return "ad_out"
+    if name.startswith("ad-block"):
+        return None
+    return "interstitial"
 
 
 def _report(label: str, stats: ScanStats) -> None:
@@ -20,9 +43,14 @@ def main() -> None:
     config = Config.load()
     conn = db.connect(config.db_path)
 
-    _report("series", scan_series_root(conn, config.series_root))
-    _report("ads", scan_flat_root(conn, config.ads_root, "ads", "category"))
-    _report("bumpers", scan_flat_root(conn, config.bumpers_root, "bumpers", "kind"))
+    _report("series", scan_series_root(conn, config.series_root, config.active_series))
+
+    shared_folder = config.ads_root == config.bumpers_root
+    ad_classifier = classify_ad if shared_folder else None
+    bumper_classifier = classify_bumper if shared_folder else None
+
+    _report("ads", scan_flat_root(conn, config.ads_root, "ads", "category", ad_classifier))
+    _report("bumpers", scan_flat_root(conn, config.bumpers_root, "bumpers", "kind", bumper_classifier))
 
     conn.close()
 

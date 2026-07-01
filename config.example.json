@@ -4,5 +4,6 @@
   "bumpers_root": "D:/TVLibrary/Bumpers",
   "db_path": "data/library.db",
   "logo_path": "D:/TVLibrary/Branding/logo.png",
-  "ticker_port": 8765
+  "ticker_port": 8765,
+  "active_series": ["Show One", "Show Two"]
 }

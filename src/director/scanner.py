@@ -13,6 +13,7 @@ valid) but flagged missing=1.
 import re
 import sqlite3
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,8 +25,14 @@ VIDEO_EXTENSIONS = {".mkv", ".mp4", ".avi", ".webm", ".mov", ".ts", ".m4v", ".wm
 _SEASON_EP_PATTERNS = [
     re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})"),
     re.compile(r"(\d{1,2})[xX](\d{1,3})"),
+    # Futurama's production codes, e.g. "1ACV01" = volume/season 1, episode 01.
+    re.compile(r"(\d)ACV(\d{1,3})"),
+    # "1.01. Episode Title" - lowest priority since a bare "N.NN" is more prone
+    # to false positives (checked last, after the more explicit markers above).
+    re.compile(r"(?<!\d)(\d{1,2})\.(\d{2,3})(?!\d)"),
 ]
 _LONE_NUMBER = re.compile(r"(?<!\d)(\d{1,3})(?!\d)")
+_FOLDER_SEASON = re.compile(r"(?:season|sezon|сезон)\s*(\d{1,2})|(\d{1,2})\s*(?:season|sezon|сезон)", re.IGNORECASE)
 
 
 @dataclass
@@ -66,6 +73,15 @@ def parse_season_episode(filename: str) -> tuple[int, int | None]:
     return 1, None
 
 
+def parse_season_from_folder(folder_name: str) -> int | None:
+    """Some shows are organized as <series>/<N sezon>/<episode files>, with no
+    season number in the filename at all - only the folder tells you."""
+    m = _FOLDER_SEASON.search(folder_name)
+    if not m:
+        return None
+    return int(m.group(1) or m.group(2))
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -76,17 +92,38 @@ def _needs_reprobe(row: sqlite3.Row | None, mtime: float, size: int) -> bool:
     return row["file_mtime"] != mtime or row["file_size"] != size
 
 
-def scan_series_root(conn: sqlite3.Connection, series_root: Path) -> ScanStats:
+def scan_series_root(
+    conn: sqlite3.Connection,
+    series_root: Path,
+    active_series: list[str] | None = None,
+) -> ScanStats:
+    """active_series: if given, only these subfolder names are treated as
+    series - everything else under series_root (ad/bumper staging folders,
+    editing project caches, titles not yet ready for rotation, ...) is
+    ignored. None means scan every subfolder (used by tests / simple setups
+    where series_root only ever contains series)."""
     stats = ScanStats()
     if not series_root.is_dir():
         stats.errors.append(f"series_root not found: {series_root}")
         return stats
 
+    allowed = set(active_series) if active_series is not None else None
+
     for series_dir in sorted(p for p in series_root.iterdir() if p.is_dir()):
+        if allowed is not None and series_dir.name not in allowed:
+            continue
+
         series_id = _upsert_series(conn, series_dir.name, series_dir)
         found_paths: set[str] = set()
 
-        parsed = [(f, *parse_season_episode(f.name)) for f in iter_video_files(series_dir)]
+        parsed = []
+        for f in iter_video_files(series_dir):
+            season, episode = parse_season_episode(f.name)
+            if f.parent != series_dir:
+                folder_season = parse_season_from_folder(f.parent.name)
+                if folder_season is not None:
+                    season = folder_season
+            parsed.append((f, season, episode))
 
         known_per_season: dict[int, set[int]] = defaultdict(set)
         for _, season, episode in parsed:
@@ -115,7 +152,19 @@ def scan_series_root(conn: sqlite3.Connection, series_root: Path) -> ScanStats:
     return stats
 
 
-def scan_flat_root(conn: sqlite3.Connection, root: Path, table: str, kind_column: str) -> ScanStats:
+def scan_flat_root(
+    conn: sqlite3.Connection,
+    root: Path,
+    table: str,
+    kind_column: str,
+    classify: Callable[[Path], str | None] | None = None,
+) -> ScanStats:
+    """classify: optional override for deriving kind/category from a file.
+    Needed when ads_root and bumpers_root point at the same folder (small
+    test libraries often start this way) - each scan then only picks up the
+    files that belong to it. Return None to skip a file for this table;
+    otherwise the returned string is used as the kind/category value in
+    place of the default (parent folder name)."""
     assert table in ("ads", "bumpers")
     stats = ScanStats()
     if not root.is_dir():
@@ -124,7 +173,12 @@ def scan_flat_root(conn: sqlite3.Connection, root: Path, table: str, kind_column
 
     found_paths: set[str] = set()
     for file_path in iter_video_files(root):
-        kind = file_path.parent.name if file_path.parent != root else None
+        if classify is not None:
+            kind = classify(file_path)
+            if kind is None:
+                continue
+        else:
+            kind = file_path.parent.name if file_path.parent != root else None
         found_paths.add(str(file_path.resolve()))
         try:
             _upsert_flat_item(conn, table, kind_column, kind, file_path, stats)
