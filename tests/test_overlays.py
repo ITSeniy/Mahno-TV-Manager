@@ -35,7 +35,12 @@ class FakeObsClient:
         self._next_item_id += 1
 
     def set_input_settings(self, name, settings, overlay):
-        self.input_settings[name] = settings
+        # Mirrors real OBS semantics: overlay=True merges onto existing settings
+        # instead of replacing them wholesale.
+        if overlay and name in self.input_settings:
+            self.input_settings[name] = {**self.input_settings[name], **settings}
+        else:
+            self.input_settings[name] = settings
 
     def get_scene_item_list(self, scene_name):
         return SimpleNamespace(
@@ -82,7 +87,7 @@ def test_ensure_logo_scales_down_for_a_small_pal_canvas():
     assert box_width < 720 * 0.2
 
 
-def test_ensure_logo_updates_existing_source_instead_of_recreating():
+def test_ensure_logo_resyncs_file_but_leaves_a_hand_tuned_layout_alone():
     client = FakeObsClient(existing_inputs=[LOGO_SOURCE])
     client.item_ids[LOGO_SOURCE] = 7
 
@@ -90,7 +95,9 @@ def test_ensure_logo_updates_existing_source_instead_of_recreating():
 
     assert client.inputs.count(LOGO_SOURCE) == 1  # not duplicated
     assert client.input_settings[LOGO_SOURCE] == {"file": "C:/branding/new_logo.png"}
-    assert 7 in client.transforms
+    # No transform call at all - someone may have hand-positioned this in OBS
+    # since it was created, and a restart of the director must not reset it.
+    assert client.transforms == {}
 
 
 def test_ensure_ticker_source_spans_full_width_and_sits_at_bottom():
@@ -120,3 +127,16 @@ def test_ensure_ticker_source_adapts_to_a_different_canvas_size():
     assert client.input_settings[TICKER_SOURCE]["height"] == height
     item_id = client.item_ids[TICKER_SOURCE]
     assert client.transforms[item_id]["positionY"] == 576 - height
+
+
+def test_ensure_ticker_source_only_resyncs_url_for_an_existing_source():
+    client = FakeObsClient(existing_inputs=[TICKER_SOURCE], base_width=720, base_height=576)
+    client.item_ids[TICKER_SOURCE] = 9
+    client.input_settings[TICKER_SOURCE] = {"url": "http://old", "width": 500, "height": 40}
+
+    ensure_ticker_source(client, "ON_AIR", "http://127.0.0.1:8765/")
+
+    # Only the URL is resynced (merged, not replaced) - a hand-adjusted
+    # size/position must survive a restart.
+    assert client.input_settings[TICKER_SOURCE] == {"url": "http://127.0.0.1:8765/", "width": 500, "height": 40}
+    assert client.transforms == {}
