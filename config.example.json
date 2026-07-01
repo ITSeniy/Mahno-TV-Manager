@@ -5,6 +5,7 @@
   "db_path": "data/library.db",
   "logo_path": "D:/TVLibrary/Branding/logo.png",
   "ticker_port": 8765,
+  "dashboard_port": 8766,
   "active_series": ["Show One", "Show Two"],
   "random_rotation_series": ["Show Two"]
 }

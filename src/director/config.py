@@ -20,6 +20,7 @@ class Config:
     db_path: Path
     logo_path: Path | None
     ticker_port: int
+    dashboard_port: int
     active_series: list[str] | None
     random_rotation_series: list[str]
 
@@ -40,6 +41,7 @@ class Config:
             db_path=Path(raw.get("db_path", REPO_ROOT / "data" / "library.db")),
             logo_path=Path(logo_path) if logo_path else None,
             ticker_port=int(raw.get("ticker_port", 8765)),
+            dashboard_port=int(raw.get("dashboard_port", 8766)),
             active_series=list(active_series) if active_series is not None else None,
             random_rotation_series=list(raw.get("random_rotation_series", [])),
         )
