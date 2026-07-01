@@ -50,6 +50,7 @@ class Config:
 @dataclass
 class Secrets:
     gemini_api_keys: list[str]
+    obs_ws_password: str | None
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Secrets":
@@ -59,4 +60,7 @@ class Secrets:
                 f"Secrets file not found: {path}. Copy secrets.example.json to secrets.json and fill in real keys."
             )
         raw = json.loads(path.read_text(encoding="utf-8"))
-        return cls(gemini_api_keys=list(raw.get("gemini_api_keys", [])))
+        return cls(
+            gemini_api_keys=list(raw.get("gemini_api_keys", [])),
+            obs_ws_password=raw.get("obs_ws_password") or None,
+        )
