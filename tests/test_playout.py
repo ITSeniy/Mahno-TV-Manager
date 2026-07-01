@@ -1,0 +1,126 @@
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from director import db
+from director.playout import advance_status, find_current_row, resolve_media_path
+
+T0 = datetime(2026, 7, 6, 10, 0, tzinfo=timezone.utc)
+
+
+def make_db(tmp_path: Path):
+    return db.connect(tmp_path / "lib.db")
+
+
+def add_episode(conn, path="/ep.mkv"):
+    conn.execute("INSERT INTO series (name, root_path) VALUES ('S', '/s')")
+    sid = conn.execute("SELECT id FROM series WHERE name='S'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO episodes (series_id, season, episode, title, file_path, duration_seconds, scanned_at) "
+        "VALUES (?, 1, 1, 't', ?, 60, datetime('now'))",
+        (sid, path),
+    )
+    return conn.execute("SELECT id FROM episodes WHERE file_path=?", (path,)).fetchone()["id"]
+
+
+def log_row(conn, start, end, item_type="episode", item_id=None, status="scheduled"):
+    conn.execute(
+        "INSERT INTO program_log (start_time, end_time, item_type, item_id, status) VALUES (?, ?, ?, ?, ?)",
+        (start.isoformat(), end.isoformat(), item_type, item_id, status),
+    )
+    return conn.execute("SELECT id FROM program_log ORDER BY id DESC LIMIT 1").fetchone()["id"]
+
+
+def test_find_current_row_picks_the_row_covering_now(tmp_path):
+    conn = make_db(tmp_path)
+    ep_id = add_episode(conn)
+    row_a = log_row(conn, T0, T0 + timedelta(minutes=5), item_id=ep_id)
+    row_b = log_row(conn, T0 + timedelta(minutes=5), T0 + timedelta(minutes=10), item_id=ep_id)
+
+    assert find_current_row(conn, T0 + timedelta(minutes=2))["id"] == row_a
+    # exactly on the boundary -> the row that is starting, not the one that just ended
+    assert find_current_row(conn, T0 + timedelta(minutes=5))["id"] == row_b
+    assert find_current_row(conn, T0 + timedelta(minutes=9))["id"] == row_b
+
+
+def test_find_current_row_returns_none_outside_generated_range(tmp_path):
+    conn = make_db(tmp_path)
+    ep_id = add_episode(conn)
+    log_row(conn, T0, T0 + timedelta(minutes=5), item_id=ep_id)
+
+    assert find_current_row(conn, T0 - timedelta(minutes=1)) is None
+    assert find_current_row(conn, T0 + timedelta(hours=1)) is None
+
+
+def test_resolve_media_path_for_each_item_type(tmp_path):
+    conn = make_db(tmp_path)
+    ep_id = add_episode(conn, "/library/ep1.mkv")
+    conn.execute("INSERT INTO ads (file_path, duration_seconds, scanned_at) VALUES ('/ads/a.mp4', 30, datetime('now'))")
+    ad_id = conn.execute("SELECT id FROM ads WHERE file_path='/ads/a.mp4'").fetchone()["id"]
+
+    ep_row = conn.execute(
+        "SELECT ? AS item_type, ? AS item_id", ("episode", ep_id)
+    ).fetchone()
+    assert resolve_media_path(conn, ep_row) == "/library/ep1.mkv"
+
+    ad_row = conn.execute("SELECT ? AS item_type, ? AS item_id", ("ad", ad_id)).fetchone()
+    assert resolve_media_path(conn, ad_row) == "/ads/a.mp4"
+
+    off_air_row = conn.execute("SELECT 'off_air' AS item_type, NULL AS item_id").fetchone()
+    assert resolve_media_path(conn, off_air_row) is None
+
+
+def test_advance_status_marks_elapsed_previous_row_as_played_and_logs_history(tmp_path):
+    conn = make_db(tmp_path)
+    ep_id = add_episode(conn)
+    row_id = log_row(conn, T0, T0 + timedelta(minutes=5), item_id=ep_id)
+
+    advance_status(conn, row_id, T0 + timedelta(minutes=5, seconds=1))
+
+    row = conn.execute("SELECT status FROM program_log WHERE id = ?", (row_id,)).fetchone()
+    assert row["status"] == "played"
+
+    history = conn.execute("SELECT * FROM play_history").fetchall()
+    assert len(history) == 1
+    assert history[0]["item_type"] == "episode"
+    assert history[0]["item_id"] == ep_id
+
+
+def test_advance_status_does_not_touch_row_that_has_not_elapsed_yet(tmp_path):
+    conn = make_db(tmp_path)
+    ep_id = add_episode(conn)
+    row_id = log_row(conn, T0, T0 + timedelta(minutes=5), item_id=ep_id)
+
+    advance_status(conn, row_id, T0 + timedelta(minutes=2))  # still mid-playback
+
+    row = conn.execute("SELECT status FROM program_log WHERE id = ?", (row_id,)).fetchone()
+    assert row["status"] == "scheduled"
+    assert conn.execute("SELECT COUNT(*) AS c FROM play_history").fetchone()["c"] == 0
+
+
+def test_advance_status_marks_rows_skipped_over_as_skipped_not_played(tmp_path):
+    conn = make_db(tmp_path)
+    ep_id = add_episode(conn)
+    row_a = log_row(conn, T0, T0 + timedelta(minutes=5), item_id=ep_id)
+    row_b = log_row(conn, T0 + timedelta(minutes=5), T0 + timedelta(minutes=10), item_id=ep_id)
+    row_c = log_row(conn, T0 + timedelta(minutes=10), T0 + timedelta(minutes=15), item_id=ep_id)
+
+    # Controller was "down" and only picks up at minute 12, having last applied row_a.
+    advance_status(conn, row_a, T0 + timedelta(minutes=12))
+
+    statuses = {
+        r["id"]: r["status"]
+        for r in conn.execute("SELECT id, status FROM program_log").fetchall()
+    }
+    assert statuses[row_a] == "played"  # the one we were actually "on" when we last checked
+    assert statuses[row_b] == "skipped"  # fully elapsed but never applied
+    assert statuses[row_c] == "scheduled"  # still current/future
+
+    history_item_ids = [r["item_id"] for r in conn.execute("SELECT item_id FROM play_history").fetchall()]
+    assert history_item_ids == [ep_id]  # only the played one is logged, not the skipped one
+
+
+def test_advance_status_handles_no_previous_row(tmp_path):
+    conn = make_db(tmp_path)
+    add_episode(conn)
+    # Should simply not error when nothing has been applied yet (fresh start).
+    advance_status(conn, None, T0)
