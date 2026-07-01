@@ -11,10 +11,11 @@ from datetime import datetime, timezone
 from director import db
 from director.config import Config
 from director.obs_client import get_client
-from director.obs_playout import ON_AIR_SCENE, apply_item, ensure_scenes
+from director.obs_playout import MEDIA_SOURCE, ON_AIR_SCENE, apply_item, ensure_scenes
 from director.overlays import ensure_logo, ensure_ticker_source
 from director.playout import advance_status, find_current_row, resolve_media_path
 from director.vhs_effect import ensure_vhs_effect
+from director.vst_audio import ensure_tape_effect
 
 POLL_INTERVAL_SECONDS = 3
 
@@ -32,6 +33,7 @@ def main() -> None:
 
     ensure_ticker_source(client, ON_AIR_SCENE, f"http://127.0.0.1:{config.ticker_port}/")
     ensure_vhs_effect(client, ON_AIR_SCENE)
+    ensure_tape_effect(client, MEDIA_SOURCE)
 
     current_row_id: int | None = None
     print("Playout controller started (Ctrl+C to stop).")
