@@ -8,3 +8,4 @@ venv/
 *.log
 /data/*.db
 /config.json
+/secrets.json

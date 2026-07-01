@@ -75,6 +75,15 @@ CREATE TABLE IF NOT EXISTS program_log (
 );
 CREATE INDEX IF NOT EXISTS idx_program_log_start ON program_log(start_time);
 CREATE INDEX IF NOT EXISTS idx_program_log_item ON program_log(item_type, item_id, start_time);
+
+CREATE TABLE IF NOT EXISTS ticker_pools (
+    id INTEGER PRIMARY KEY,
+    generated_at TEXT NOT NULL,
+    msk_date TEXT NOT NULL,
+    source TEXT NOT NULL CHECK (source IN ('gemini', 'fallback')),
+    lines_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ticker_pools_msk_date ON ticker_pools(msk_date);
 """
 
 

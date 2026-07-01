@@ -2,5 +2,7 @@
   "series_root": "D:/TVLibrary/Series",
   "ads_root": "D:/TVLibrary/Ads",
   "bumpers_root": "D:/TVLibrary/Bumpers",
-  "db_path": "data/library.db"
+  "db_path": "data/library.db",
+  "logo_path": "D:/TVLibrary/Branding/logo.png",
+  "ticker_port": 8765
 }

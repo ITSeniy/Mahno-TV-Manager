@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 from director import db
 from director.config import Config
 from director.obs_client import get_client
-from director.obs_playout import apply_item, ensure_scenes
+from director.obs_playout import ON_AIR_SCENE, apply_item, ensure_scenes
+from director.overlays import ensure_logo, ensure_ticker_source
 from director.playout import advance_status, find_current_row, resolve_media_path
 
 POLL_INTERVAL_SECONDS = 3
@@ -22,6 +23,13 @@ def main() -> None:
     conn = db.connect(config.db_path)
     client = get_client()
     ensure_scenes(client)
+
+    if config.logo_path and config.logo_path.exists():
+        ensure_logo(client, ON_AIR_SCENE, str(config.logo_path))
+    else:
+        print("logo_path не задан или файл не найден - оверлей лого пропущен")
+
+    ensure_ticker_source(client, ON_AIR_SCENE, f"http://127.0.0.1:{config.ticker_port}/")
 
     current_row_id: int | None = None
     print("Playout controller started (Ctrl+C to stop).")
