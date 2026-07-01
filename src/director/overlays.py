@@ -3,6 +3,11 @@
 The logo is pinned to the bottom-right corner (classic channel "bug") using
 OBS's bounds-scaling so it looks right regardless of the source image's
 native resolution - no need to know the logo's pixel size ahead of time.
+
+Sizes are fractions of the canvas, not fixed pixel counts: the canvas isn't
+locked to 1920x1080 (this channel targets a period-accurate PAL SD canvas,
+720x576), and fixed pixel sizes tuned for HD would swallow a third of a
+576-tall frame.
 """
 
 import obsws_python as obsws
@@ -10,11 +15,11 @@ import obsws_python as obsws
 LOGO_SOURCE = "channel_logo"
 TICKER_SOURCE = "ticker_overlay"
 
-LOGO_BOX_WIDTH = 220
-LOGO_BOX_HEIGHT = 110
-LOGO_MARGIN = 24
+LOGO_WIDTH_FRACTION = 0.14
+LOGO_HEIGHT_FRACTION = 0.16
+LOGO_MARGIN_FRACTION = 0.025
 
-TICKER_HEIGHT = 60
+TICKER_HEIGHT_FRACTION = 0.10
 
 _ALIGN_TOP_LEFT = 5
 _ALIGN_CENTER = 0
@@ -38,6 +43,11 @@ def ensure_logo(client: obsws.ReqClient, scene_name: str, logo_path: str) -> Non
         client.set_input_settings(LOGO_SOURCE, {"file": logo_path}, True)
 
     video = client.get_video_settings()
+    box_width = round(video.base_width * LOGO_WIDTH_FRACTION)
+    box_height = round(video.base_height * LOGO_HEIGHT_FRACTION)
+    margin_x = round(video.base_width * LOGO_MARGIN_FRACTION)
+    margin_y = round(video.base_height * LOGO_MARGIN_FRACTION)
+
     item_id = _scene_item_id(client, scene_name, LOGO_SOURCE)
     client.set_scene_item_transform(
         scene_name,
@@ -45,18 +55,19 @@ def ensure_logo(client: obsws.ReqClient, scene_name: str, logo_path: str) -> Non
         {
             "boundsType": "OBS_BOUNDS_SCALE_INNER",
             "boundsAlignment": _ALIGN_CENTER,
-            "boundsWidth": LOGO_BOX_WIDTH,
-            "boundsHeight": LOGO_BOX_HEIGHT,
+            "boundsWidth": box_width,
+            "boundsHeight": box_height,
             "alignment": _ALIGN_TOP_LEFT,
-            "positionX": video.base_width - LOGO_BOX_WIDTH - LOGO_MARGIN,
-            "positionY": video.base_height - LOGO_BOX_HEIGHT - LOGO_MARGIN,
+            "positionX": video.base_width - box_width - margin_x,
+            "positionY": video.base_height - box_height - margin_y,
         },
     )
 
 
 def ensure_ticker_source(client: obsws.ReqClient, scene_name: str, url: str) -> None:
     video = client.get_video_settings()
-    settings = {"url": url, "width": video.base_width, "height": TICKER_HEIGHT}
+    height = round(video.base_height * TICKER_HEIGHT_FRACTION)
+    settings = {"url": url, "width": video.base_width, "height": height}
 
     if TICKER_SOURCE not in _input_names(client):
         client.create_input(scene_name, TICKER_SOURCE, "browser_source", settings, True)
@@ -71,6 +82,6 @@ def ensure_ticker_source(client: obsws.ReqClient, scene_name: str, url: str) -> 
             "boundsType": "OBS_BOUNDS_NONE",
             "alignment": _ALIGN_TOP_LEFT,
             "positionX": 0,
-            "positionY": video.base_height - TICKER_HEIGHT,
+            "positionY": video.base_height - height,
         },
     )

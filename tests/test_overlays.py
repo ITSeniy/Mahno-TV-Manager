@@ -1,11 +1,11 @@
 from types import SimpleNamespace
 
 from director.overlays import (
-    LOGO_BOX_HEIGHT,
-    LOGO_BOX_WIDTH,
-    LOGO_MARGIN,
+    LOGO_HEIGHT_FRACTION,
+    LOGO_MARGIN_FRACTION,
     LOGO_SOURCE,
-    TICKER_HEIGHT,
+    LOGO_WIDTH_FRACTION,
+    TICKER_HEIGHT_FRACTION,
     TICKER_SOURCE,
     ensure_logo,
     ensure_ticker_source,
@@ -47,18 +47,39 @@ class FakeObsClient:
 
 
 def test_ensure_logo_creates_and_positions_bottom_right():
-    client = FakeObsClient()
+    client = FakeObsClient(base_width=1920, base_height=1080)
     ensure_logo(client, "ON_AIR", "C:/branding/logo.png")
 
     assert LOGO_SOURCE in client.inputs
     assert client.input_settings[LOGO_SOURCE] == {"file": "C:/branding/logo.png"}
 
+    box_width = round(1920 * LOGO_WIDTH_FRACTION)
+    box_height = round(1080 * LOGO_HEIGHT_FRACTION)
+    margin_x = round(1920 * LOGO_MARGIN_FRACTION)
+    margin_y = round(1080 * LOGO_MARGIN_FRACTION)
+
     item_id = client.item_ids[LOGO_SOURCE]
     transform = client.transforms[item_id]
-    assert transform["boundsWidth"] == LOGO_BOX_WIDTH
-    assert transform["boundsHeight"] == LOGO_BOX_HEIGHT
-    assert transform["positionX"] == 1920 - LOGO_BOX_WIDTH - LOGO_MARGIN
-    assert transform["positionY"] == 1080 - LOGO_BOX_HEIGHT - LOGO_MARGIN
+    assert transform["boundsWidth"] == box_width
+    assert transform["boundsHeight"] == box_height
+    assert transform["positionX"] == 1920 - box_width - margin_x
+    assert transform["positionY"] == 1080 - box_height - margin_y
+
+
+def test_ensure_logo_scales_down_for_a_small_pal_canvas():
+    client = FakeObsClient(base_width=720, base_height=576)
+    ensure_logo(client, "ON_AIR", "C:/branding/logo.png")
+
+    box_width = round(720 * LOGO_WIDTH_FRACTION)
+    box_height = round(576 * LOGO_HEIGHT_FRACTION)
+    item_id = client.item_ids[LOGO_SOURCE]
+    transform = client.transforms[item_id]
+
+    assert transform["boundsWidth"] == box_width
+    assert transform["boundsHeight"] == box_height
+    # A box sized for 1920x1080 (220px) would swallow ~30% of a 720-wide canvas -
+    # the fraction-based box must stay proportionally small instead.
+    assert box_width < 720 * 0.2
 
 
 def test_ensure_logo_updates_existing_source_instead_of_recreating():
@@ -73,26 +94,29 @@ def test_ensure_logo_updates_existing_source_instead_of_recreating():
 
 
 def test_ensure_ticker_source_spans_full_width_and_sits_at_bottom():
-    client = FakeObsClient()
+    client = FakeObsClient(base_width=1920, base_height=1080)
     ensure_ticker_source(client, "ON_AIR", "http://127.0.0.1:8765/")
 
+    height = round(1080 * TICKER_HEIGHT_FRACTION)
     assert TICKER_SOURCE in client.inputs
     assert client.input_settings[TICKER_SOURCE] == {
         "url": "http://127.0.0.1:8765/",
         "width": 1920,
-        "height": TICKER_HEIGHT,
+        "height": height,
     }
 
     item_id = client.item_ids[TICKER_SOURCE]
     transform = client.transforms[item_id]
     assert transform["positionX"] == 0
-    assert transform["positionY"] == 1080 - TICKER_HEIGHT
+    assert transform["positionY"] == 1080 - height
 
 
 def test_ensure_ticker_source_adapts_to_a_different_canvas_size():
-    client = FakeObsClient(base_width=1280, base_height=720)
+    client = FakeObsClient(base_width=720, base_height=576)
     ensure_ticker_source(client, "ON_AIR", "http://127.0.0.1:8765/")
 
-    assert client.input_settings[TICKER_SOURCE]["width"] == 1280
+    height = round(576 * TICKER_HEIGHT_FRACTION)
+    assert client.input_settings[TICKER_SOURCE]["width"] == 720
+    assert client.input_settings[TICKER_SOURCE]["height"] == height
     item_id = client.item_ids[TICKER_SOURCE]
-    assert client.transforms[item_id]["positionY"] == 720 - TICKER_HEIGHT
+    assert client.transforms[item_id]["positionY"] == 576 - height
