@@ -20,6 +20,8 @@ OFF_AIR_TEXT_SOURCE = "off_air_label"
 
 RESTART_ACTION = "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"
 
+_ALIGN_TOP_LEFT = 5
+
 
 def _resolve_kind(client: obsws.ReqClient, *name_prefixes: str) -> str:
     # unversioned=True returns display-friendly names (e.g. "color_source") that
@@ -41,6 +43,45 @@ def _input_names(client: obsws.ReqClient) -> set[str]:
     return {i["inputName"] for i in client.get_input_list().inputs}
 
 
+def _scene_item_id(client: obsws.ReqClient, scene_name: str, source_name: str) -> int:
+    for item in client.get_scene_item_list(scene_name).scene_items:
+        if item["sourceName"] == source_name:
+            return item["sceneItemId"]
+    raise RuntimeError(f"scene item '{source_name}' not found in scene '{scene_name}'")
+
+
+def _ensure_media_source_fills_canvas(client: obsws.ReqClient) -> None:
+    """Library files come in wildly inconsistent native resolutions/aspect
+    ratios (anamorphic DVD masters, VHS captures with inconsistently cropped
+    frame edges, mixed NTSC/PAL/HD sources) - left at OBS's default 1:1
+    sizing, each one letterboxes or pillarboxes by a different amount.
+    Stretching every source to exactly fill the 720x576 canvas trades a
+    little aspect distortion (mild, since nearly everything here is already
+    close to 4:3) for zero black bars ever, on any file, without needing to
+    special-case any of them.
+
+    Unlike overlays.py's hands-off-after-creation sources, this is a
+    correctness fix rather than a look a user might want to hand-tune per
+    file, so it's unconditionally reapplied every time the director starts
+    rather than only when the source is first created.
+    """
+    video = client.get_video_settings()
+    item_id = _scene_item_id(client, ON_AIR_SCENE, MEDIA_SOURCE)
+    client.set_scene_item_transform(
+        ON_AIR_SCENE,
+        item_id,
+        {
+            "boundsType": "OBS_BOUNDS_STRETCH",
+            "boundsAlignment": _ALIGN_TOP_LEFT,
+            "boundsWidth": video.base_width,
+            "boundsHeight": video.base_height,
+            "alignment": _ALIGN_TOP_LEFT,
+            "positionX": 0,
+            "positionY": 0,
+        },
+    )
+
+
 def ensure_scenes(client: obsws.ReqClient) -> None:
     scenes = _scene_names(client)
 
@@ -49,6 +90,7 @@ def ensure_scenes(client: obsws.ReqClient) -> None:
     if MEDIA_SOURCE not in _input_names(client):
         media_kind = _resolve_kind(client, "ffmpeg_source")
         client.create_input(ON_AIR_SCENE, MEDIA_SOURCE, media_kind, {}, True)
+    _ensure_media_source_fills_canvas(client)
 
     if OFF_AIR_SCENE not in scenes:
         client.create_scene(OFF_AIR_SCENE)

@@ -21,11 +21,12 @@ PAGE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <title>Ticker</title>
 <style>
-  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; height: 100%; }
   .ticker-bar {
-    position: fixed; left: 0; bottom: 0; width: 100%; height: 60px;
+    position: fixed; left: 0; bottom: 0; width: 100%; height: 100%;
     background: linear-gradient(to bottom, #003366, #0055aa 60%, #003366);
     border-top: 3px solid #ffcc00;
+    box-sizing: border-box;
     display: flex; align-items: center;
     box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.5);
     font-family: Arial, Helvetica, sans-serif;
@@ -37,29 +38,47 @@ PAGE = """<!DOCTYPE html>
   }
   .ticker-item {
     display: inline-flex; align-items: center;
-    color: #fff; font-weight: bold; font-size: 28px; text-shadow: 2px 2px 2px #000;
-    padding-right: 80px;
+    color: #fff; font-weight: bold; text-shadow: 2px 2px 2px #000;
   }
-  .ticker-item::before { content: "\\25CF"; color: #ffcc00; margin-right: 20px; font-size: 16px; }
+  .ticker-item::before { content: "\\25CF"; color: #ffcc00; }
   @keyframes scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 </style>
 </head>
 <body>
   <div class="ticker-bar"><div class="ticker-track" id="track"></div></div>
   <script>
+    // The bar fills whatever height OBS assigns this browser source (see
+    // overlays.py's TICKER_HEIGHT_FRACTION) rather than a fixed pixel value -
+    // a hardcoded CSS height here previously didn't match the OBS-side
+    // viewport size, so the bottom-anchored bar had its top (and the top of
+    // the text) silently clipped off. Font/marker/spacing scale off the
+    // actual viewport height so this doesn't recur if that fraction changes.
     const REFRESH_MS = 60000;
 
     function render(lines) {
       const track = document.getElementById("track");
       track.innerHTML = "";
+
+      const fontSize = Math.max(10, Math.round(window.innerHeight * 0.5));
+      const gap = Math.round(fontSize * 2.5);
+      const dotSize = Math.round(fontSize * 0.5);
+      const dotMargin = Math.round(fontSize * 0.6);
+
       for (let rep = 0; rep < 2; rep++) {
         for (const line of lines) {
           const span = document.createElement("span");
           span.className = "ticker-item";
           span.textContent = line;
+          span.style.fontSize = fontSize + "px";
+          span.style.paddingRight = gap + "px";
           track.appendChild(span);
         }
       }
+
+      const style = document.createElement("style");
+      style.textContent = `.ticker-item::before { font-size: ${dotSize}px; margin-right: ${dotMargin}px; }`;
+      document.head.appendChild(style);
+
       const totalChars = lines.join("").length;
       const duration = Math.max(20, totalChars * 0.25);
       track.style.setProperty("--duration", duration + "s");

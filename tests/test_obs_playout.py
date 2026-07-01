@@ -20,12 +20,20 @@ from director.obs_playout import (
 
 
 class FakeObsClient:
-    def __init__(self, existing_scenes=(), existing_inputs=()):
+    def __init__(self, existing_scenes=(), existing_inputs=(), base_width=720, base_height=576):
         self.scenes = list(existing_scenes)
         self.inputs = list(existing_inputs)
         self.calls = []
         self.current_scene = None
         self.input_settings = {}
+        self.base_width = base_width
+        self.base_height = base_height
+        self.transforms = {}  # scene_item_id -> transform dict
+        self.item_ids = {}  # input_name -> scene_item_id
+        self._next_item_id = 1
+        for existing in self.inputs:
+            self.item_ids[existing] = self._next_item_id
+            self._next_item_id += 1
 
     def get_scene_list(self):
         return SimpleNamespace(scenes=[{"sceneName": s} for s in self.scenes])
@@ -38,6 +46,14 @@ class FakeObsClient:
             input_kinds=["ffmpeg_source", "color_source_v3", "text_gdiplus_v3", "image_source"]
         )
 
+    def get_video_settings(self):
+        return SimpleNamespace(base_width=self.base_width, base_height=self.base_height)
+
+    def get_scene_item_list(self, scene_name):
+        return SimpleNamespace(
+            scene_items=[{"sourceName": name, "sceneItemId": iid} for name, iid in self.item_ids.items()]
+        )
+
     def create_scene(self, name):
         self.calls.append(("create_scene", name))
         self.scenes.append(name)
@@ -45,10 +61,16 @@ class FakeObsClient:
     def create_input(self, scene_name, input_name, input_kind, input_settings, scene_item_enabled):
         self.calls.append(("create_input", scene_name, input_name, input_kind))
         self.inputs.append(input_name)
+        self.item_ids[input_name] = self._next_item_id
+        self._next_item_id += 1
 
     def set_input_settings(self, name, settings, overlay):
         self.calls.append(("set_input_settings", name, settings, overlay))
         self.input_settings[name] = settings
+
+    def set_scene_item_transform(self, scene_name, item_id, transform):
+        self.calls.append(("set_scene_item_transform", scene_name, item_id, transform))
+        self.transforms[item_id] = transform
 
     def trigger_media_input_action(self, name, action):
         self.calls.append(("trigger_media_input_action", name, action))
@@ -69,6 +91,29 @@ def test_ensure_scenes_creates_everything_on_a_blank_obs():
     assert OFF_AIR_TEXT_SOURCE in client.inputs
 
 
+def test_ensure_scenes_stretches_the_media_source_to_fill_the_canvas():
+    client = FakeObsClient(base_width=720, base_height=576)
+    ensure_scenes(client)
+
+    item_id = client.item_ids[MEDIA_SOURCE]
+    transform = client.transforms[item_id]
+    assert transform["boundsType"] == "OBS_BOUNDS_STRETCH"
+    assert transform["boundsWidth"] == 720
+    assert transform["boundsHeight"] == 576
+    assert transform["positionX"] == 0
+    assert transform["positionY"] == 0
+
+
+def test_ensure_scenes_media_source_stretch_tracks_canvas_size():
+    client = FakeObsClient(base_width=1280, base_height=720)
+    ensure_scenes(client)
+
+    item_id = client.item_ids[MEDIA_SOURCE]
+    transform = client.transforms[item_id]
+    assert transform["boundsWidth"] == 1280
+    assert transform["boundsHeight"] == 720
+
+
 def test_ensure_scenes_is_idempotent_when_everything_already_exists():
     client = FakeObsClient(
         existing_scenes=[ON_AIR_SCENE, OFF_AIR_SCENE],
@@ -76,7 +121,11 @@ def test_ensure_scenes_is_idempotent_when_everything_already_exists():
     )
     ensure_scenes(client)
 
-    assert client.calls == []  # nothing created a second time
+    # Nothing gets (re-)created...
+    assert not any(c[0] in ("create_scene", "create_input") for c in client.calls)
+    # ...but the media source's fill-canvas transform is still (re-)applied
+    # every time, unlike overlay positions - see _ensure_media_source_fills_canvas.
+    assert any(c[0] == "set_scene_item_transform" for c in client.calls)
 
 
 def test_ensure_scenes_only_creates_missing_pieces():
