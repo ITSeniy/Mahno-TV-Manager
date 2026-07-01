@@ -1,12 +1,18 @@
 """Picks what airs next, the way a syndication rerun rotation works:
 
-Each series has a cursor - the next episode is whatever comes after the last
-one that series aired, in (season, episode) order, wrapping back to the
-first episode once the series is exhausted. Which series gets the next slot
-is round-robin by "longest since last aired", skipping a series that would
+Each series is tagged 'sequential' or 'random' (series.rotation_mode) - a
+curation call, not something derived from the files themselves. Serialized
+shows with story arcs ("premieres") air in (season, episode) order via a
+cursor that wraps once exhausted. Shows with no continuity ("random reruns")
+draw randomly from whichever episodes have sat unaired longest, so it plays
+like a real rerun rotation instead of a fixed loop.
+
+Which SERIES gets the next slot (independent of the mode above) is
+round-robin by "longest since last aired", skipping a series that would
 break the max-consecutive-same-series rule for the current block.
 """
 
+import random
 import sqlite3
 
 
@@ -43,16 +49,42 @@ def last_aired_time(conn: sqlite3.Connection, series_id: int) -> str:
     return row["t"] or ""  # empty string sorts before any ISO timestamp -> "never aired" wins ties
 
 
-def next_episode_for_series(conn: sqlite3.Connection, series_id: int) -> sqlite3.Row | None:
-    order = series_episode_order(conn, series_id)
-    if not order:
-        return None
-    last_id = last_aired_episode_id(conn, series_id)
+def _last_aired_time_for_episode(conn: sqlite3.Connection, episode_id: int) -> str:
+    row = conn.execute(
+        "SELECT MAX(start_time) AS t FROM program_log WHERE item_type = 'episode' AND item_id = ?",
+        (episode_id,),
+    ).fetchone()
+    return row["t"] or ""
+
+
+def _next_sequential_episode(order: list[sqlite3.Row], last_id: int | None) -> sqlite3.Row:
     if last_id is None:
         return order[0]
     ids = [row["id"] for row in order]
     idx = ids.index(last_id) if last_id in ids else -1
     return order[(idx + 1) % len(order)]
+
+
+def _next_random_episode(conn: sqlite3.Connection, order: list[sqlite3.Row]) -> sqlite3.Row:
+    """Draws from the stalest half of the catalog (never-aired episodes sort
+    first) rather than always picking the single least-recently-aired one, so
+    reruns don't fall into a predictable fixed loop."""
+    scored = sorted(order, key=lambda ep: _last_aired_time_for_episode(conn, ep["id"]))
+    pool_size = max(1, len(scored) // 2)
+    return random.choice(scored[:pool_size])
+
+
+def next_episode_for_series(conn: sqlite3.Connection, series_id: int) -> sqlite3.Row | None:
+    order = series_episode_order(conn, series_id)
+    if not order:
+        return None
+
+    mode_row = conn.execute("SELECT rotation_mode FROM series WHERE id = ?", (series_id,)).fetchone()
+    if mode_row is not None and mode_row["rotation_mode"] == "random":
+        return _next_random_episode(conn, order)
+
+    last_id = last_aired_episode_id(conn, series_id)
+    return _next_sequential_episode(order, last_id)
 
 
 def _series_allowed(series_id: int, recent_series_window: list[int], max_consecutive: int) -> bool:

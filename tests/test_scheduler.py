@@ -28,11 +28,12 @@ def build_rich_library(conn):
             "INSERT INTO ads (file_path, duration_seconds, scanned_at) VALUES (?, ?, datetime('now'))",
             (f"/ads/ad{a}.mp4", duration),
         )
-    for b in range(10):
-        conn.execute(
-            "INSERT INTO bumpers (file_path, kind, duration_seconds, scanned_at) VALUES (?, 'id', ?, datetime('now'))",
-            (f"/bumpers/b{b}.mp4", 10),
-        )
+    for kind in ("ad_in", "ad_out", "interstitial"):
+        for b in range(3):
+            conn.execute(
+                "INSERT INTO bumpers (file_path, kind, duration_seconds, scanned_at) VALUES (?, ?, ?, datetime('now'))",
+                (f"/bumpers/{kind}_{b}.mp4", kind, 8),
+            )
     conn.commit()
 
 
@@ -152,3 +153,70 @@ def test_raises_when_catalog_is_empty(tmp_path):
     conn = db.connect(tmp_path / "lib.db")
     with pytest.raises(RuntimeError):
         generate_day(conn, date(2026, 7, 6))
+
+
+def test_ad_breaks_use_ad_in_and_ad_out_bumpers_specifically(tmp_path):
+    conn = db.connect(tmp_path / "lib.db")
+    build_rich_library(conn)
+
+    generate_day(conn, date(2026, 7, 6))
+
+    bumper_kinds_used = {
+        r["kind"]
+        for r in conn.execute(
+            "SELECT b.kind FROM program_log pl JOIN bumpers b ON b.id = pl.item_id WHERE pl.item_type = 'bumper'"
+        ).fetchall()
+    }
+    assert "ad_in" in bumper_kinds_used
+    assert "ad_out" in bumper_kinds_used
+    assert "interstitial" in bumper_kinds_used
+
+
+def test_ad_load_never_exceeds_seven_minutes_in_any_rolling_hour(tmp_path):
+    conn = db.connect(tmp_path / "lib.db")
+    build_rich_library(conn)
+
+    generate_day(conn, date(2026, 7, 6))
+
+    ads = conn.execute(
+        "SELECT start_time, end_time FROM program_log WHERE item_type = 'ad' ORDER BY start_time"
+    ).fetchall()
+    assert ads, "expected at least one ad to have been scheduled"
+
+    # Brute-force check: for every ad's start time, sum ad seconds in the
+    # trailing hour and confirm it never exceeds the 7-minute cap.
+    from director.ad_pods import AD_CAP_SECONDS_PER_HOUR, ad_seconds_in_trailing_hour
+
+    for row in ads:
+        now = datetime.fromisoformat(row["start_time"]) + timedelta(seconds=1)
+        assert ad_seconds_in_trailing_hour(conn, now) <= AD_CAP_SECONDS_PER_HOUR + 1  # small float slack
+
+
+def test_double_ad_in_happens_sometimes_but_not_always(tmp_path, monkeypatch):
+    conn = db.connect(tmp_path / "lib.db")
+    build_rich_library(conn)
+
+    # Force every coin-flip to hit the "double" branch.
+    monkeypatch.setattr("director.scheduler.random.random", lambda: 0.0)
+    generate_day(conn, date(2026, 7, 6))
+
+    def count_consecutive_ad_in_pairs(conn):
+        rows = conn.execute(
+            "SELECT pl.id, pl.item_type, b.kind FROM program_log pl "
+            "LEFT JOIN bumpers b ON b.id = pl.item_id AND pl.item_type = 'bumper' "
+            "ORDER BY pl.start_time"
+        ).fetchall()
+        pairs = 0
+        for prev, nxt in zip(rows, rows[1:]):
+            if prev["kind"] == "ad_in" and nxt["kind"] == "ad_in":
+                pairs += 1
+        return pairs
+
+    assert count_consecutive_ad_in_pairs(conn) > 0
+
+    # And with the coin-flip forced the other way, it must never double up.
+    conn2 = db.connect(tmp_path / "lib2.db")
+    build_rich_library(conn2)
+    monkeypatch.setattr("director.scheduler.random.random", lambda: 0.99)
+    generate_day(conn2, date(2026, 7, 6))
+    assert count_consecutive_ad_in_pairs(conn2) == 0

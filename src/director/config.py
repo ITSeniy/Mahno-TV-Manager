@@ -21,6 +21,7 @@ class Config:
     logo_path: Path | None
     ticker_port: int
     active_series: list[str] | None
+    random_rotation_series: list[str]
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":
@@ -40,6 +41,7 @@ class Config:
             logo_path=Path(logo_path) if logo_path else None,
             ticker_port=int(raw.get("ticker_port", 8765)),
             active_series=list(active_series) if active_series is not None else None,
+            random_rotation_series=list(raw.get("random_rotation_series", [])),
         )
 
 

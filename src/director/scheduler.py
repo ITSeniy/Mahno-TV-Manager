@@ -14,15 +14,20 @@ here; the playout controller (Phase 3) is where real wall-clock drift
 correction belongs.
 """
 
+import random
 import sqlite3
 from datetime import date, datetime, timedelta
 
-from director.ad_pods import build_ad_pod, build_filler, pick_bumper
+from director.ad_pods import AD_CAP_SECONDS_PER_HOUR, ad_seconds_in_trailing_hour, build_ad_pod, build_filler, pick_bumper
 from director.blocks import OFF_AIR_END, OFF_AIR_START, BlockTemplate, blocks_for_date
 from director.rotation import pick_next_episode
 from director.timeutil import combine_msk
 
 MIN_SEGMENT_SECONDS = 30  # below this, don't bother trying to schedule anything more in a block
+
+# REN TV's early-2000s look occasionally ran two "we'll be right back" bumpers
+# back to back instead of one - the traffic manager can lean on that quirk.
+DOUBLE_AD_IN_PROBABILITY = 0.25
 
 
 def _write_log(
@@ -47,6 +52,47 @@ def _write_log(
         (start_time.isoformat(), end_time.isoformat(), item_type, item_id, block_name, event_name),
     )
     return end_time
+
+
+def _insert_ad_break(
+    conn: sqlite3.Connection,
+    current_time: datetime,
+    block_end: datetime,
+    block: BlockTemplate,
+    event_name: str | None,
+) -> tuple[datetime, bool]:
+    """ad_in (sometimes twice) -> ad pod -> ad_out. Returns the possibly-
+    unchanged current_time and whether a break was actually inserted - it's
+    skipped if the rolling 7-min/hour budget has no room left, in which case
+    the caller should keep the block's "due for a break" state so it retries
+    on the next slot rather than waiting a full cadence period again."""
+    remaining_after = (block_end - current_time).total_seconds()
+    if remaining_after <= MIN_SEGMENT_SECONDS:
+        return current_time, False
+
+    budget = AD_CAP_SECONDS_PER_HOUR - ad_seconds_in_trailing_hour(conn, current_time)
+    if budget <= MIN_SEGMENT_SECONDS:
+        return current_time, False
+
+    pod_target = min(block.ad_break_duration_seconds, remaining_after, budget)
+
+    ad_in_count = 2 if random.random() < DOUBLE_AD_IN_PROBABILITY else 1
+    for _ in range(ad_in_count):
+        remaining_now = (block_end - current_time).total_seconds()
+        ad_in = pick_bumper(conn, kind="ad_in", max_duration=remaining_now)
+        if ad_in is None:
+            break
+        current_time = _write_log(conn, current_time, "bumper", ad_in, block.name, event_name)
+
+    for ad in build_ad_pod(conn, pod_target, current_time):
+        current_time = _write_log(conn, current_time, "ad", ad, block.name, event_name)
+
+    remaining_after_ads = max(0.0, (block_end - current_time).total_seconds())
+    ad_out = pick_bumper(conn, kind="ad_out", max_duration=remaining_after_ads)
+    if ad_out is not None:
+        current_time = _write_log(conn, current_time, "bumper", ad_out, block.name, event_name)
+
+    return current_time, True
 
 
 def _fill_block(
@@ -75,24 +121,21 @@ def _fill_block(
         current_time = _write_log(conn, current_time, "episode", episode, block.name, event_name)
         recent_series_window.append(episode["series_id"])
 
+        did_break = False
         elapsed_since_break = (current_time - last_ad_break).total_seconds()
-        remaining_after = (block_end - current_time).total_seconds()
-        if elapsed_since_break >= block.ad_break_every_minutes * 60 and remaining_after > MIN_SEGMENT_SECONDS:
-            pod_target = min(block.ad_break_duration_seconds, remaining_after)
+        if elapsed_since_break >= block.ad_break_every_minutes * 60:
+            current_time, did_break = _insert_ad_break(conn, current_time, block_end, block, event_name)
+            if did_break:
+                last_ad_break = current_time
 
-            pre_roll = pick_bumper(conn, max_duration=remaining_after)
-            if pre_roll is not None:
-                current_time = _write_log(conn, current_time, "bumper", pre_roll, block.name, event_name)
-
-            for ad in build_ad_pod(conn, pod_target, current_time):
-                current_time = _write_log(conn, current_time, "ad", ad, block.name, event_name)
-
-            remaining_after_ads = max(0.0, (block_end - current_time).total_seconds())
-            post_roll = pick_bumper(conn, max_duration=remaining_after_ads)
-            if post_roll is not None:
-                current_time = _write_log(conn, current_time, "bumper", post_roll, block.name, event_name)
-
-            last_ad_break = current_time
+        if not did_break:
+            # Generic "you're watching X" bumper between programs, independent
+            # of ad breaks - what REN TV's era called a "bezrazmerka".
+            remaining_for_bumper = (block_end - current_time).total_seconds()
+            if remaining_for_bumper > MIN_SEGMENT_SECONDS:
+                interstitial = pick_bumper(conn, kind="interstitial", max_duration=remaining_for_bumper)
+                if interstitial is not None:
+                    current_time = _write_log(conn, current_time, "bumper", interstitial, block.name, event_name)
 
     return current_time
 

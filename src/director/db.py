@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS series (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     root_path TEXT NOT NULL,
+    rotation_mode TEXT NOT NULL DEFAULT 'sequential' CHECK (rotation_mode IN ('sequential', 'random')),
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -87,10 +88,20 @@ CREATE INDEX IF NOT EXISTS idx_ticker_pools_msk_date ON ticker_pools(msk_date);
 """
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """CREATE TABLE IF NOT EXISTS doesn't add columns to a table that already
+    exists from before this column was introduced - patch those in here."""
+    series_cols = {row["name"] for row in conn.execute("PRAGMA table_info(series)")}
+    if "rotation_mode" not in series_cols:
+        conn.execute("ALTER TABLE series ADD COLUMN rotation_mode TEXT NOT NULL DEFAULT 'sequential'")
+    conn.commit()
+
+
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn

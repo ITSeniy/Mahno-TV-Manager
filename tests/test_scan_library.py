@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from director.scan_library import classify_ad, classify_bumper
+from director import db
+from director.scan_library import apply_rotation_modes, classify_ad, classify_bumper
 
 
 @pytest.mark.parametrize(
@@ -31,3 +32,26 @@ def test_classify_ad(filename, expected):
 )
 def test_classify_bumper(filename, expected):
     assert classify_bumper(Path(filename)) == expected
+
+
+def test_apply_rotation_modes_marks_only_named_series_as_random(tmp_path):
+    conn = db.connect(tmp_path / "lib.db")
+    for name in ("Avatar", "Beavers", "Cats"):
+        conn.execute("INSERT INTO series (name, root_path) VALUES (?, ?)", (name, f"/{name}"))
+
+    apply_rotation_modes(conn, ["Beavers", "Cats"])
+
+    modes = {r["name"]: r["rotation_mode"] for r in conn.execute("SELECT name, rotation_mode FROM series")}
+    assert modes == {"Avatar": "sequential", "Beavers": "random", "Cats": "random"}
+
+
+def test_apply_rotation_modes_is_idempotent_and_resets_on_rerun(tmp_path):
+    conn = db.connect(tmp_path / "lib.db")
+    conn.execute("INSERT INTO series (name, root_path) VALUES ('Avatar', '/Avatar')")
+
+    apply_rotation_modes(conn, ["Avatar"])
+    assert conn.execute("SELECT rotation_mode FROM series").fetchone()["rotation_mode"] == "random"
+
+    # Re-running with an updated (now empty) list must flip it back, not just leave stale state.
+    apply_rotation_modes(conn, [])
+    assert conn.execute("SELECT rotation_mode FROM series").fetchone()["rotation_mode"] == "sequential"

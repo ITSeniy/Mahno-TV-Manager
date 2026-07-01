@@ -32,6 +32,17 @@ def classify_bumper(path: Path) -> str | None:
     return "interstitial"
 
 
+def apply_rotation_modes(conn, random_series: list[str]) -> None:
+    """Curation call, not something derived from the files: series named in
+    random_series air in random rerun order, everything else stays
+    sequential (the default - correct for premieres/serialized shows)."""
+    conn.execute("UPDATE series SET rotation_mode = 'sequential'")
+    if random_series:
+        placeholders = ",".join("?" * len(random_series))
+        conn.execute(f"UPDATE series SET rotation_mode = 'random' WHERE name IN ({placeholders})", random_series)
+    conn.commit()
+
+
 def _report(label: str, stats: ScanStats) -> None:
     print(f"{label}: +{stats.added} added, {stats.updated} updated, "
           f"{stats.unchanged} unchanged, {stats.missing} now missing")
@@ -44,6 +55,7 @@ def main() -> None:
     conn = db.connect(config.db_path)
 
     _report("series", scan_series_root(conn, config.series_root, config.active_series))
+    apply_rotation_modes(conn, config.random_rotation_series)
 
     shared_folder = config.ads_root == config.bumpers_root
     ad_classifier = classify_ad if shared_folder else None

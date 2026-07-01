@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from director import db
-from director.rotation import pick_next_episode
+from director.rotation import next_episode_for_series, pick_next_episode
 
 
 def make_db(tmp_path: Path):
@@ -9,8 +9,11 @@ def make_db(tmp_path: Path):
     return conn
 
 
-def add_series(conn, name):
-    conn.execute("INSERT INTO series (name, root_path) VALUES (?, ?)", (name, f"/{name}"))
+def add_series(conn, name, rotation_mode="sequential"):
+    conn.execute(
+        "INSERT INTO series (name, root_path, rotation_mode) VALUES (?, ?, ?)",
+        (name, f"/{name}", rotation_mode),
+    )
     return conn.execute("SELECT id FROM series WHERE name = ?", (name,)).fetchone()["id"]
 
 
@@ -94,3 +97,41 @@ def test_returns_none_when_nothing_fits(tmp_path):
 
     pick = pick_next_episode(conn, [a], max_duration_seconds=60, recent_series_window=[], max_consecutive=5)
     assert pick is None
+
+
+def test_random_mode_prioritizes_never_aired_episodes(tmp_path):
+    conn = make_db(tmp_path)
+    a = add_series(conn, "Rerun Show", rotation_mode="random")
+    aired = add_episode(conn, a, 1, 1)
+    add_episode(conn, a, 1, 2)
+    add_episode(conn, a, 1, 3)
+
+    log_aired(conn, aired, "2026-07-01T10:00:00+00:00")
+
+    # Episode 1 has aired; 2 and 3 haven't. With only 3 episodes the "stalest
+    # half" pool is just the single oldest one, so the never-aired episodes
+    # (both older than the aired one, tied at "") must be preferred.
+    for _ in range(20):
+        pick = next_episode_for_series(conn, a)
+        assert pick["episode"] in (2, 3)
+
+
+def test_random_mode_produces_variety_over_many_picks(tmp_path):
+    conn = make_db(tmp_path)
+    a = add_series(conn, "Rerun Show", rotation_mode="random")
+    for ep in range(1, 11):
+        add_episode(conn, a, 1, ep)
+
+    picks = {next_episode_for_series(conn, a)["episode"] for _ in range(50)}
+    assert len(picks) > 1  # not deterministically the same episode every time
+
+
+def test_sequential_mode_is_unaffected_by_rotation_mode_default(tmp_path):
+    conn = make_db(tmp_path)
+    a = add_series(conn, "Premiere Show")  # default rotation_mode='sequential'
+    ep1 = add_episode(conn, a, 1, 1)
+    add_episode(conn, a, 1, 2)
+
+    assert next_episode_for_series(conn, a)["id"] == ep1
+    log_aired(conn, ep1, "2026-07-01T10:00:00+00:00")
+    assert next_episode_for_series(conn, a)["episode"] == 2

@@ -9,6 +9,25 @@ import sqlite3
 from datetime import datetime, timedelta
 
 USAGE_LOOKBACK_HOURS = 24
+AD_CAP_SECONDS_PER_HOUR = 7 * 60  # real-world constraint: no more than 7 minutes of ads per clock hour
+MIN_FILLER_AD_SECONDS = 5  # not worth querying for an ad pod under a near-zero remaining budget
+
+
+def ad_seconds_in_trailing_hour(conn: sqlite3.Connection, now_utc: datetime) -> float:
+    """Sum of ad durations already logged in the 60 minutes before now_utc -
+    used to cap how much more can be scheduled without breaking the 7
+    min/hour rule. Looks at program_log directly so it accounts for
+    whatever's already been generated in this pass or a previous one."""
+    window_start = (now_utc - timedelta(hours=1)).isoformat()
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM((julianday(end_time) - julianday(start_time)) * 86400), 0) AS total
+        FROM program_log
+        WHERE item_type = 'ad' AND start_time >= ? AND start_time < ?
+        """,
+        (window_start, now_utc.isoformat()),
+    ).fetchone()
+    return row["total"]
 
 
 def least_used_ads(conn: sqlite3.Connection, now_utc: datetime) -> list[sqlite3.Row]:
@@ -57,11 +76,19 @@ def pick_bumper(conn: sqlite3.Connection, kind: str | None = None, max_duration:
 
 
 def build_filler(conn: sqlite3.Connection, remaining_seconds: float, now_utc: datetime) -> list[tuple[str, sqlite3.Row]]:
-    """Pads a gap too small for another episode with ads, falling back to a bumper."""
-    pod = build_ad_pod(conn, remaining_seconds, now_utc)
+    """Pads a gap too small for another episode with ads, falling back to a
+    bumper. Ad time is still capped at AD_CAP_SECONDS_PER_HOUR here - this is
+    also what fills the run-up to the 05:00 off-air cutoff, and without a cap
+    of its own that padding could otherwise blow well past the hourly limit
+    that _insert_ad_break enforces for regular in-block breaks."""
+    ad_budget = max(0.0, AD_CAP_SECONDS_PER_HOUR - ad_seconds_in_trailing_hour(conn, now_utc))
+    pod = build_ad_pod(conn, min(remaining_seconds, ad_budget), now_utc) if ad_budget > MIN_FILLER_AD_SECONDS else []
     if pod:
         return [("ad", a) for a in pod]
-    bumper = pick_bumper(conn, max_duration=remaining_seconds)
+    # ad_in/ad_out are meant to bookend an actual ad pod, not serve as generic
+    # padding - picking one at random here would look like a broken "we'll be
+    # right back" with no ads following. interstitial is the one built for this.
+    bumper = pick_bumper(conn, kind="interstitial", max_duration=remaining_seconds)
     if bumper:
         return [("bumper", bumper)]
     return []
