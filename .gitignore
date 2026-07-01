@@ -9,3 +9,4 @@ venv/
 /data/*.db
 /config.json
 /secrets.json
+/library/
