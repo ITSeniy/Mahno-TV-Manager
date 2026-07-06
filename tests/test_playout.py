@@ -101,6 +101,46 @@ def test_resolve_media_path_falls_back_to_raw_when_render_is_stale(tmp_path):
     assert resolve_media_path(conn, ep_row) == ("/library/ep1.mkv", False)
 
 
+def _add_card(conn, status, rendered_path=None, kind="weather", target=47):
+    conn.execute(
+        "INSERT INTO cards (kind, msk_date, slot_start, target_seconds, rendered_path, status) "
+        "VALUES (?, '2026-07-06', ?, ?, ?, ?)",
+        (kind, T0.isoformat(), target, rendered_path, status),
+    )
+    return conn.execute("SELECT id FROM cards ORDER BY id DESC LIMIT 1").fetchone()["id"]
+
+
+def test_resolve_media_path_for_a_rendered_card(tmp_path):
+    conn = make_db(tmp_path)
+    rendered = tmp_path / "card.mp4"
+    rendered.write_bytes(b"x")
+    cid = _add_card(conn, "rendered", str(rendered))
+
+    row = conn.execute("SELECT ? AS item_type, ? AS item_id", ("card", cid)).fetchone()
+    # ntsc-rs is baked into the card at render time, so it reports as pre-rendered.
+    assert resolve_media_path(conn, row) == (str(rendered), True)
+
+
+def test_resolve_media_path_card_falls_back_to_interstitial_when_unrendered(tmp_path):
+    conn = make_db(tmp_path)
+    cid = _add_card(conn, "pending")
+    conn.execute(
+        "INSERT INTO bumpers (file_path, kind, duration_seconds, scanned_at) "
+        "VALUES ('/b/i.mp4', 'interstitial', 8, datetime('now'))"
+    )
+
+    row = conn.execute("SELECT ? AS item_type, ? AS item_id", ("card", cid)).fetchone()
+    assert resolve_media_path(conn, row) == ("/b/i.mp4", False)
+
+
+def test_resolve_media_path_card_returns_none_when_unrendered_and_no_fallback(tmp_path):
+    conn = make_db(tmp_path)
+    cid = _add_card(conn, "pending")
+
+    row = conn.execute("SELECT ? AS item_type, ? AS item_id", ("card", cid)).fetchone()
+    assert resolve_media_path(conn, row) == (None, False)
+
+
 def test_advance_status_marks_elapsed_previous_row_as_played_and_logs_history(tmp_path):
     conn = make_db(tmp_path)
     ep_id = add_episode(conn)

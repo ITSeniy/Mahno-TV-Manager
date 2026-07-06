@@ -10,5 +10,6 @@
   "random_rotation_series": ["Show Two"],
   "ntsc_rs_cli_path": "ntsc-rs-windows-standalone/bin/ntsc-rs-cli.exe",
   "ntsc_rs_settings_path": "ntsc-rs-windows-standalone/settings.json",
-  "ntsc_render_cache_dir": "D:/TVLibrary/NtscCache"
+  "ntsc_render_cache_dir": "D:/TVLibrary/NtscCache",
+  "card_music_path": "D:/TVLibrary/Branding/card_music_loop.mp3"
 }

@@ -24,7 +24,12 @@ from director.output_window import open_program_projector
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 LOG_DIR = REPO_ROOT / "logs"
 
-MANAGED_MODULES = ["director.run_playout", "director.run_ticker", "director.run_dashboard"]
+MANAGED_MODULES = [
+    "director.run_playout",
+    "director.run_ticker",
+    "director.run_dashboard",
+    "director.run_card_renderer",
+]
 
 MIN_BACKOFF_SECONDS = 3.0
 MAX_BACKOFF_SECONDS = 120.0

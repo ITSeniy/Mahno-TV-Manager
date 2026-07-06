@@ -57,10 +57,10 @@ def _ensure_media_source_fills_canvas(client: obsws.ReqClient) -> None:
     ratios (anamorphic DVD masters, VHS captures with inconsistently cropped
     frame edges, mixed NTSC/PAL/HD sources) - left at OBS's default 1:1
     sizing, each one letterboxes or pillarboxes by a different amount.
-    Stretching every source to exactly fill the 720x576 canvas trades a
-    little aspect distortion (mild, since nearly everything here is already
-    close to 4:3) for zero black bars ever, on any file, without needing to
-    special-case any of them.
+    Stretching every source to exactly fill the canvas (NTSC SD 720x480, read
+    live from GetVideoSettings) trades a little aspect distortion (mild, since
+    nearly everything here is already close to 4:3) for zero black bars ever,
+    on any file, without needing to special-case any of them.
 
     Unlike overlays.py's hands-off-after-creation sources, this is a
     correctness fix rather than a look a user might want to hand-tune per

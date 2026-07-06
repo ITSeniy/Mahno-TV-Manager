@@ -11,10 +11,30 @@ current, which is also exactly the hard-cutover behavior wanted for the
 
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 
+from director.ad_pods import pick_bumper
 from director.ntsc_render import is_render_valid
 
 _ITEM_TABLES = {"episode": "episodes", "ad": "ads", "bumper": "bumpers"}
+
+
+def _resolve_card(conn: sqlite3.Connection, item_id: int) -> tuple[str | None, bool]:
+    """Cards are generated, not scanned, so validity is simply 'the render job
+    finished and the file is on disk' rather than the source-mtime check used
+    for library files. If a card hasn't been rendered yet (the profilaktika job
+    hasn't caught up, or it failed), fall back to a static interstitial bumper
+    so the slot isn't dead air - the program_log stays authoritative either way."""
+    card = conn.execute("SELECT rendered_path, status FROM cards WHERE id = ?", (item_id,)).fetchone()
+    if card is not None and card["status"] == "rendered" and card["rendered_path"] and Path(card["rendered_path"]).exists():
+        return card["rendered_path"], True  # ntsc-rs already baked in, live filters stay off
+
+    fallback = pick_bumper(conn, kind="interstitial")
+    if fallback is not None:
+        if is_render_valid(fallback):
+            return fallback["rendered_path"], True
+        return fallback["file_path"], False
+    return None, False
 
 
 def find_current_row(conn: sqlite3.Connection, now_utc: datetime) -> sqlite3.Row | None:
@@ -32,6 +52,9 @@ def resolve_media_path(conn: sqlite3.Connection, row: sqlite3.Row) -> tuple[str 
     nothing's been pre-rendered yet, it just returns the raw source path
     with is_ntsc_rendered=False, so the caller can fall back to the live
     obs-retro-effects filters for that item instead."""
+    if row["item_type"] == "card":
+        return _resolve_card(conn, row["item_id"])
+
     table = _ITEM_TABLES.get(row["item_type"])
     if table is None:  # off_air
         return None, False

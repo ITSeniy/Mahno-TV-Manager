@@ -39,7 +39,26 @@ def describe_item(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     if item_type == "bumper":
         bumper = conn.execute("SELECT file_path, kind FROM bumpers WHERE id = ?", (item_id,)).fetchone()
         return f"[ЗАСТАВКА:{bumper['kind']}] {bumper['file_path']}" if bumper else "заставка (файл не найден)"
+    if item_type == "card":
+        card = conn.execute("SELECT kind FROM cards WHERE id = ?", (item_id,)).fetchone()
+        return f"[КАРТОЧКА:{card['kind']}]" if card else "карточка (не найдена)"
     return item_type
+
+
+# Program items = what a viewer would call "a programme": episodes and (later)
+# films/reels, i.e. everything the on-screen EPG lists, skipping ads/bumpers/cards.
+PROGRAM_ITEM_TYPES = ("episode", "film", "reel")
+
+
+def program_items_after(conn: sqlite3.Connection, start_iso: str, count: int = 3) -> list[sqlite3.Row]:
+    """The next `count` programmes starting after start_iso - the data behind an
+    'epg_next' ("Далее") card."""
+    placeholders = ", ".join("?" for _ in PROGRAM_ITEM_TYPES)
+    return conn.execute(
+        f"SELECT * FROM program_log WHERE start_time > ? AND item_type IN ({placeholders}) "
+        "ORDER BY start_time LIMIT ?",
+        (start_iso, *PROGRAM_ITEM_TYPES, count),
+    ).fetchall()
 
 
 def get_now_and_next(

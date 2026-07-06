@@ -10,6 +10,7 @@ from director.dashboard_data import (
     describe_item,
     get_day_schedule,
     get_now_and_next,
+    program_items_after,
     replace_item,
     search_catalog,
 )
@@ -68,6 +69,33 @@ def test_describe_item_for_each_type(tmp_path):
 
     off_air_row = conn.execute("SELECT 'off_air' AS item_type, NULL AS item_id").fetchone()
     assert describe_item(conn, off_air_row) == "ТЕХПЕРЕРЫВ"
+
+
+def test_describe_item_for_a_card(tmp_path):
+    conn = make_db(tmp_path)
+    conn.execute(
+        "INSERT INTO cards (kind, msk_date, slot_start, target_seconds, status) "
+        "VALUES ('epg_next', '2026-07-06', ?, 60, 'pending')",
+        (T0.isoformat(),),
+    )
+    cid = conn.execute("SELECT id FROM cards ORDER BY id DESC LIMIT 1").fetchone()["id"]
+    row = conn.execute("SELECT ? AS item_type, ? AS item_id", ("card", cid)).fetchone()
+    assert describe_item(conn, row) == "[КАРТОЧКА:epg_next]"
+
+
+def test_program_items_after_returns_only_upcoming_programmes(tmp_path):
+    conn = make_db(tmp_path)
+    sid = add_series(conn, "Show")
+    ep1 = add_episode(conn, sid, 1, 1)
+    ep2 = add_episode(conn, sid, 1, 2)
+    ad_id = add_ad(conn, "/ads/a.mp4")
+    log_row(conn, T0, T0 + timedelta(minutes=10), item_id=ep1)
+    log_row(conn, T0 + timedelta(minutes=10), T0 + timedelta(minutes=12), item_type="ad", item_id=ad_id)
+    log_row(conn, T0 + timedelta(minutes=12), T0 + timedelta(minutes=22), item_id=ep2)
+
+    nxt = program_items_after(conn, T0.isoformat(), count=3)
+    # ep1 isn't strictly after T0, the ad is not a programme -> only ep2 qualifies.
+    assert [r["item_id"] for r in nxt] == [ep2]
 
 
 def test_get_now_and_next_returns_current_plus_upcoming(tmp_path):

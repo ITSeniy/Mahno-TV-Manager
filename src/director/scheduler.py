@@ -18,16 +18,23 @@ import random
 import sqlite3
 from datetime import date, datetime, timedelta
 
+from director import cards
 from director.ad_pods import AD_CAP_SECONDS_PER_HOUR, ad_seconds_in_trailing_hour, build_ad_pod, build_filler, pick_bumper
 from director.blocks import OFF_AIR_END, OFF_AIR_START, BlockTemplate, blocks_for_date
 from director.rotation import pick_next_episode
-from director.timeutil import combine_msk
+from director.timeutil import ceil_quarter_msk, combine_msk, next_quarter_msk, utc_to_msk
 
 MIN_SEGMENT_SECONDS = 30  # below this, don't bother trying to schedule anything more in a block
 
 # REN TV's early-2000s look occasionally ran two "we'll be right back" bumpers
 # back to back instead of one - the traffic manager can lean on that quirk.
 DOUBLE_AD_IN_PROBABILITY = 0.25
+
+# Continuity-card padding: the tail of every slot is filled up to the next
+# quarter-hour anchor with generated cards of exactly the remaining length.
+CARD_MAX_SECONDS = 120.0   # keep any single static plate reasonably short; split longer gaps across cards
+CLOCK_MAX_SECONDS = 30.0   # gaps this small just get a clock/ident plate
+SIGN_ON_LABEL = "начало эфира"  # block_name for the morning sign-on slate (guide + weather)
 
 
 def _write_log(
@@ -95,6 +102,57 @@ def _insert_ad_break(
     return current_time, True
 
 
+def _reserve_card(
+    conn: sqlite3.Connection,
+    start_time: datetime,
+    seconds: float,
+    block_name: str,
+    event_name: str | None,
+    msk_date: str,
+    kind: str,
+) -> datetime:
+    card_id = cards.reserve_card(conn, kind, start_time, seconds, msk_date)
+    return _write_log(conn, start_time, "card", {"id": card_id, "duration_seconds": seconds}, block_name, event_name)
+
+
+def _fill_gap_with_cards(
+    conn: sqlite3.Connection,
+    current_time: datetime,
+    target: datetime,
+    block_name: str,
+    event_name: str | None,
+    msk_date: str,
+    lead_kinds: tuple[str, ...] = (),
+) -> datetime:
+    """Fills [current_time, target) exactly with one or more continuity cards,
+    each at most CARD_MAX_SECONDS. Because we render these cards ourselves we
+    can size the last one to the exact remaining seconds, so the timeline stays
+    gap-free while landing precisely on the anchor. `lead_kinds` are emitted
+    first (e.g. the detailed guide + weather at sign-on); the rest are chosen by
+    gap size and time of day."""
+    lead = list(lead_kinds)
+    is_morning = utc_to_msk(current_time).hour < 13
+    index = 0
+    while True:
+        gap = (target - current_time).total_seconds()
+        if gap <= 0.001:
+            break
+        chunk = min(gap, CARD_MAX_SECONDS)
+        if gap - chunk < 1.0:  # don't strand a sub-second sliver that can't be its own card
+            chunk = gap
+        if lead:
+            kind = lead.pop(0)
+        elif chunk <= CLOCK_MAX_SECONDS:
+            kind = cards.KIND_CLOCK
+        elif is_morning and index % 3 == 0:
+            kind = cards.KIND_WEATHER
+        else:
+            kind = cards.KIND_EPG_NEXT
+        current_time = _reserve_card(conn, current_time, chunk, block_name, event_name, msk_date, kind)
+        index += 1
+    return current_time
+
+
 def _fill_block(
     conn: sqlite3.Connection,
     block: BlockTemplate,
@@ -103,36 +161,65 @@ def _fill_block(
     eligible_series_ids: list[int],
     event_name: str | None,
     day_start_iso: str,
+    msk_date: str,
 ) -> datetime:
     recent_series_window: list[int] = []
     last_ad_break = current_time
+
+    # Align to a quarter anchor if we arrived mid-quarter (only happens right
+    # after the day's sign-on slate). Every slot below already lands on one.
+    anchor = min(ceil_quarter_msk(current_time), block_end)
+    if (anchor - current_time).total_seconds() > MIN_SEGMENT_SECONDS:
+        current_time = _fill_gap_with_cards(conn, current_time, anchor, block.name, event_name, msk_date)
 
     while True:
         remaining = (block_end - current_time).total_seconds()
         if remaining <= MIN_SEGMENT_SECONDS:
             break
 
-        episode = pick_next_episode(
-            conn, eligible_series_ids, remaining, recent_series_window, block.max_consecutive_same_series, day_start_iso
-        )
-        if episode is None:
-            # Nothing fits (or every premiere series has already hit today's
-            # cap and nothing random is due either) - this is the "director
-            # genuinely can't fill it any other way" case, so fall back to
-            # ads/an interstitial rather than leave dead air.
-            filler = build_filler(conn, remaining, current_time)
+        # Pack programs into this anchor slot: the first may run long (a program
+        # can span anchors), each subsequent one only if it still fits before
+        # the next anchor - that's what lets several short cartoons (Смешарики
+        # ~6:30) share one slot instead of each demanding its own.
+        placed = 0
+        while True:
+            if placed == 0:
+                room = (block_end - current_time).total_seconds()
+            else:
+                room = (min(next_quarter_msk(current_time), block_end) - current_time).total_seconds()
+            if room <= MIN_SEGMENT_SECONDS:
+                break
+            episode = pick_next_episode(
+                conn, eligible_series_ids, room, recent_series_window, block.max_consecutive_same_series, day_start_iso
+            )
+            if episode is None:
+                break
+            current_time = _write_log(conn, current_time, "episode", episode, block.name, event_name)
+            recent_series_window.append(episode["series_id"])
+            placed += 1
+
+        if placed == 0:
+            # Nothing fits at all (or every premiere series has hit today's cap
+            # and nothing random is due) - fall back to the ad/interstitial
+            # filler for the rest of the block rather than leave dead air.
+            filler = build_filler(conn, (block_end - current_time).total_seconds(), current_time)
             for kind, item in filler:
                 current_time = _write_log(conn, current_time, kind, item, block.name, event_name)
             break
 
-        current_time = _write_log(conn, current_time, "episode", episode, block.name, event_name)
-        recent_series_window.append(episode["series_id"])
-
-        elapsed_since_break = (current_time - last_ad_break).total_seconds()
-        if elapsed_since_break >= block.ad_break_every_minutes * 60:
-            current_time, did_break = _insert_ad_break(conn, current_time, block_end, block, event_name)
+        # Pad the slot tail up to the next quarter anchor. A large gap first
+        # spends an ad break (when the rolling cadence is due), then continuity
+        # cards fill the exact remainder so the next program starts on the anchor.
+        anchor = min(ceil_quarter_msk(current_time), block_end)
+        gap = (anchor - current_time).total_seconds()
+        if gap <= 0:
+            continue  # content landed exactly on an anchor
+        if gap > CLOCK_MAX_SECONDS and (current_time - last_ad_break).total_seconds() >= block.ad_break_every_minutes * 60:
+            current_time, did_break = _insert_ad_break(conn, current_time, anchor, block, event_name)
             if did_break:
                 last_ad_break = current_time
+        if (anchor - current_time).total_seconds() > 0:
+            current_time = _fill_gap_with_cards(conn, current_time, anchor, block.name, event_name, msk_date)
 
     return current_time
 
@@ -150,6 +237,15 @@ def generate_day(conn: sqlite3.Connection, broadcast_date: date) -> int:
 
     current_time = combine_msk(broadcast_date, OFF_AIR_END)
     day_start_iso = current_time.isoformat()
+    msk_date = broadcast_date.isoformat()
+
+    # Sign-on slate: the detailed program guide for the day + weather, filling
+    # 10:00 up to the first program anchor (as a real channel opened its day).
+    first_anchor = next_quarter_msk(current_time)
+    current_time = _fill_gap_with_cards(
+        conn, current_time, first_anchor, SIGN_ON_LABEL, event_name, msk_date,
+        lead_kinds=(cards.KIND_EPG_DAY, cards.KIND_WEATHER),
+    )
 
     for block in blocks:
         end_date = broadcast_date if block.end > block.start else broadcast_date + timedelta(days=1)
@@ -158,7 +254,7 @@ def generate_day(conn: sqlite3.Connection, broadcast_date: date) -> int:
             continue  # earlier blocks already drifted past this one's window entirely
 
         eligible = [sid for sid in series_ids if block.series_filter is None or series_names[sid] in block.series_filter]
-        current_time = _fill_block(conn, block, current_time, block_end, eligible, event_name, day_start_iso)
+        current_time = _fill_block(conn, block, current_time, block_end, eligible, event_name, day_start_iso, msk_date)
 
     off_air_start_nominal = combine_msk(broadcast_date + timedelta(days=1), OFF_AIR_START)
 

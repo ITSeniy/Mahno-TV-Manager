@@ -5,9 +5,9 @@ OBS's bounds-scaling so it looks right regardless of the source image's
 native resolution - no need to know the logo's pixel size ahead of time.
 
 Sizes are fractions of the canvas, not fixed pixel counts: the canvas isn't
-locked to 1920x1080 (this channel targets a period-accurate PAL SD canvas,
-720x576), and fixed pixel sizes tuned for HD would swallow a third of a
-576-tall frame.
+locked to 1920x1080 (this channel targets a period-accurate NTSC SD canvas,
+720x480 - matching the mostly-NTSC library and the ntsc-rs signal chain), and
+fixed pixel sizes tuned for HD would swallow a third of the frame.
 
 Geometry (position/size) is only applied the first time a source is
 created. run_playout.py calls ensure_logo/ensure_ticker_source on every

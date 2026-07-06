@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "obsws-python>=1.7",
     "google-genai>=0.3",
+    "playwright>=1.40",  # renders continuity-card HTML to stills; also needs `playwright install chromium`
 ]
 
 [project.optional-dependencies]

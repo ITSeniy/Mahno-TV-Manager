@@ -26,6 +26,7 @@ class Config:
     ntsc_rs_cli_path: Path | None
     ntsc_rs_settings_path: Path | None
     ntsc_render_cache_dir: Path | None
+    card_music_path: Path | None
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":
@@ -40,6 +41,7 @@ class Config:
         ntsc_rs_cli_path = raw.get("ntsc_rs_cli_path")
         ntsc_rs_settings_path = raw.get("ntsc_rs_settings_path")
         ntsc_render_cache_dir = raw.get("ntsc_render_cache_dir")
+        card_music_path = raw.get("card_music_path")
         return cls(
             series_root=Path(raw["series_root"]),
             ads_root=Path(raw["ads_root"]),
@@ -53,6 +55,7 @@ class Config:
             ntsc_rs_cli_path=Path(ntsc_rs_cli_path) if ntsc_rs_cli_path else None,
             ntsc_rs_settings_path=Path(ntsc_rs_settings_path) if ntsc_rs_settings_path else None,
             ntsc_render_cache_dir=Path(ntsc_render_cache_dir) if ntsc_render_cache_dir else None,
+            card_music_path=Path(card_music_path) if card_music_path else None,
         )
 
 
