@@ -52,6 +52,8 @@ def test_missing_render_config_reports_absent_paths():
     cfg = Config(
         series_root=Path("."), ads_root=Path("."), bumpers_root=Path("."), db_path=Path("x"),
         logo_path=None, ticker_port=1, dashboard_port=2, active_series=None, random_rotation_series=[],
-        ntsc_rs_cli_path=None, ntsc_rs_settings_path=Path("s"), ntsc_render_cache_dir=Path("c"), card_music_path=None,
+        series_categories={}, ntsc_rs_cli_path=None, ntsc_rs_settings_path=Path("s"),
+        ntsc_render_cache_dir=Path("c"), card_music_path=None,
+        films_root=None, active_films=None, film_categories={}, film_repeat_days=14,
     )
     assert missing_render_config(cfg) == ["ntsc_rs_cli_path"]

@@ -147,9 +147,95 @@ def test_weekend_event_override_is_applied(tmp_path):
     rows = conn.execute(
         "SELECT DISTINCT block_name, event_name FROM program_log WHERE event_name IS NOT NULL"
     ).fetchall()
-    assert rows, "weekend generation should have used the marathon event override"
-    assert all(r["event_name"] == "выходной марафон" for r in rows)
+    assert rows, "weekend generation should have used the marathon overlay"
+    # Saturday composes marathon (daytime) + Adult Swim (night), so the event
+    # label is the joined overlay names.
+    assert all("выходной марафон" in r["event_name"] for r in rows)
     assert any(r["block_name"] == "марафон" for r in rows)
+
+
+def _make_show0_adult(conn):
+    conn.execute("UPDATE series SET category = 'adult-animation', rotation_mode = 'random' WHERE name = 'Show 0'")
+    conn.commit()
+    return conn.execute("SELECT id FROM series WHERE name = 'Show 0'").fetchone()["id"]
+
+
+def test_adult_animation_airs_only_in_the_adult_swim_block_on_friday(tmp_path):
+    from director.timeutil import utc_to_msk
+
+    conn = db.connect(tmp_path / "lib.db")
+    build_rich_library(conn)
+    adult_sid = _make_show0_adult(conn)
+
+    friday = date(2026, 7, 3)
+    assert friday.weekday() == 4
+    generate_day(conn, friday)
+
+    rows = conn.execute(
+        "SELECT pl.start_time FROM program_log pl JOIN episodes e ON e.id = pl.item_id "
+        "WHERE pl.item_type = 'episode' AND e.series_id = ?",
+        (adult_sid,),
+    ).fetchall()
+    assert rows, "adult-animation should air in the Friday Adult Swim block"
+    for r in rows:
+        hour = utc_to_msk(datetime.fromisoformat(r["start_time"])).hour
+        assert hour >= 23 or hour < 2, f"adult-animation aired outside Adult Swim at MSK hour {hour}"
+
+
+def test_adult_animation_never_airs_on_a_weekday(tmp_path):
+    conn = db.connect(tmp_path / "lib.db")
+    build_rich_library(conn)
+    adult_sid = _make_show0_adult(conn)
+
+    monday = date(2026, 7, 6)
+    assert monday.weekday() == 0
+    generate_day(conn, monday)
+
+    aired = conn.execute(
+        "SELECT COUNT(*) AS c FROM program_log pl JOIN episodes e ON e.id = pl.item_id "
+        "WHERE pl.item_type = 'episode' AND e.series_id = ?",
+        (adult_sid,),
+    ).fetchone()["c"]
+    assert aired == 0  # no Adult Swim on Mon-Thu, and adult-animation is barred everywhere else
+
+
+def build_film(conn, title="Кино", reels=(1500, 1500, 1500)):  # 3 x 25min
+    conn.execute("INSERT INTO films (title, root_path) VALUES (?, ?)", (title, f"/{title}"))
+    fid = conn.execute("SELECT id FROM films WHERE title = ?", (title,)).fetchone()["id"]
+    for i, d in enumerate(reels, start=1):
+        conn.execute(
+            "INSERT INTO reels (film_id, reel_number, file_path, duration_seconds, scanned_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
+            (fid, i, f"/{title}/r{i}.mkv", d),
+        )
+    conn.commit()
+    return fid
+
+
+def test_weekend_film_slot_places_a_film_as_film_marker_plus_reels(tmp_path):
+    from director.timeutil import utc_to_msk
+
+    conn = db.connect(tmp_path / "lib.db")
+    build_rich_library(conn)
+    conn.execute("UPDATE series SET rotation_mode = 'random'")  # keep daytime full so blocks start on time
+    conn.commit()
+    build_film(conn)
+
+    saturday = date(2026, 7, 4)
+    generate_day(conn, saturday)
+
+    counts = {
+        r["item_type"]: r["c"]
+        for r in conn.execute(
+            "SELECT item_type, COUNT(*) AS c FROM program_log WHERE block_name = 'вечерний фильм' GROUP BY item_type"
+        ).fetchall()
+    }
+    assert counts.get("film", 0) == 1  # one EPG-visible programme marker
+    assert counts.get("reel", 0) == 2  # the other two reels of the 3-reel film
+
+    film_start = conn.execute("SELECT start_time FROM program_log WHERE item_type = 'film'").fetchone()["start_time"]
+    msk = utc_to_msk(datetime.fromisoformat(film_start))
+    assert (msk.hour, msk.minute) == (21, 0)  # the film tentpole starts on its 21:00 anchor
 
 
 def test_raises_when_catalog_is_empty(tmp_path):

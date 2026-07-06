@@ -65,6 +65,23 @@ def test_connect_migrates_a_pre_card_program_log_in_place(tmp_path):
     assert {"idx_program_log_start", "idx_program_log_item"} <= indexes
 
 
+def test_connect_adds_category_column_to_a_pre_category_series_table(tmp_path):
+    path = tmp_path / "old.db"
+    raw = sqlite3.connect(path)
+    raw.executescript(
+        "CREATE TABLE series (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, root_path TEXT NOT NULL, "
+        "rotation_mode TEXT NOT NULL DEFAULT 'sequential', created_at TEXT NOT NULL DEFAULT (datetime('now')));"
+        "INSERT INTO series (name, root_path) VALUES ('Old Show', '/old');"
+    )
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(path)
+    row = conn.execute("SELECT name, category FROM series").fetchone()
+    assert row["name"] == "Old Show"
+    assert row["category"] == "cartoon"  # new column backfilled with the default
+
+
 def test_migration_is_idempotent_and_survives_reconnect(tmp_path):
     path = tmp_path / "old.db"
     raw = sqlite3.connect(path)

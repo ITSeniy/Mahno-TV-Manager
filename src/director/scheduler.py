@@ -20,7 +20,8 @@ from datetime import date, datetime, timedelta
 
 from director import cards
 from director.ad_pods import AD_CAP_SECONDS_PER_HOUR, ad_seconds_in_trailing_hour, build_ad_pod, build_filler, pick_bumper
-from director.blocks import OFF_AIR_END, OFF_AIR_START, BlockTemplate, blocks_for_date
+from director.blocks import OFF_AIR_END, OFF_AIR_START, BlockTemplate, block_allows_series, blocks_for_date
+from director.films import pick_next_film
 from director.rotation import pick_next_episode
 from director.timeutil import ceil_quarter_msk, combine_msk, next_quarter_msk, utc_to_msk
 
@@ -153,6 +154,36 @@ def _fill_gap_with_cards(
     return current_time
 
 
+def _place_film(
+    conn: sqlite3.Connection,
+    block: BlockTemplate,
+    current_time: datetime,
+    block_end: datetime,
+    eligible_film_ids: list[int],
+    event_name: str | None,
+    film_repeat_days: int,
+) -> datetime | None:
+    """Lays a whole film as a tentpole: the first reel is a 'film' program_log
+    row (the EPG-visible programme marker), the rest are 'reel' rows, with an ad
+    break between reels whenever there's room without pushing the next reel past
+    the block. Returns the advanced time, or None if no eligible film fits."""
+    remaining = (block_end - current_time).total_seconds()
+    picked = pick_next_film(conn, eligible_film_ids, current_time, film_repeat_days, max_total_seconds=remaining)
+    if picked is None:
+        return None
+
+    _film_id, reels = picked
+    for i, reel in enumerate(reels):
+        item_type = "film" if i == 0 else "reel"
+        current_time = _write_log(conn, current_time, item_type, reel, block.name, event_name)
+        if i < len(reels) - 1:
+            # Bound the break so the next reel still fits before block_end.
+            break_bound = block_end - timedelta(seconds=reels[i + 1]["duration_seconds"])
+            if (break_bound - current_time).total_seconds() > MIN_SEGMENT_SECONDS:
+                current_time, _ = _insert_ad_break(conn, current_time, break_bound, block, event_name)
+    return current_time
+
+
 def _fill_block(
     conn: sqlite3.Connection,
     block: BlockTemplate,
@@ -162,6 +193,8 @@ def _fill_block(
     event_name: str | None,
     day_start_iso: str,
     msk_date: str,
+    eligible_film_ids: list[int] = (),
+    film_repeat_days: int = 14,
 ) -> datetime:
     recent_series_window: list[int] = []
     last_ad_break = current_time
@@ -171,6 +204,17 @@ def _fill_block(
     anchor = min(ceil_quarter_msk(current_time), block_end)
     if (anchor - current_time).total_seconds() > MIN_SEGMENT_SECONDS:
         current_time = _fill_gap_with_cards(conn, current_time, anchor, block.name, event_name, msk_date)
+
+    # Film-slot blocks lead with a film tentpole, then fill the tail with
+    # episodes like any other block. If no film is available it degrades to a
+    # normal episode block.
+    if block.content == "film":
+        after_film = _place_film(conn, block, current_time, block_end, list(eligible_film_ids), event_name, film_repeat_days)
+        if after_film is not None:
+            current_time = after_film
+            anchor = min(ceil_quarter_msk(current_time), block_end)
+            if (anchor - current_time).total_seconds() > 0:
+                current_time = _fill_gap_with_cards(conn, current_time, anchor, block.name, event_name, msk_date)
 
     while True:
         remaining = (block_end - current_time).total_seconds()
@@ -224,14 +268,16 @@ def _fill_block(
     return current_time
 
 
-def generate_day(conn: sqlite3.Connection, broadcast_date: date) -> int:
+def generate_day(conn: sqlite3.Connection, broadcast_date: date, film_repeat_days: int = 14) -> int:
     blocks, event_name = blocks_for_date(broadcast_date)
 
-    all_series = conn.execute("SELECT id, name FROM series").fetchall()
+    all_series = conn.execute("SELECT id, name, category FROM series").fetchall()
     if not all_series:
         raise RuntimeError("No series in the catalog - run the library scanner first")
     series_ids = [row["id"] for row in all_series]
     series_names = {row["id"]: row["name"] for row in all_series}
+    series_categories = {row["id"]: row["category"] for row in all_series}
+    film_ids = [row["id"] for row in conn.execute("SELECT id FROM films")]
 
     rows_before = conn.execute("SELECT COUNT(*) AS c FROM program_log").fetchone()["c"]
 
@@ -248,13 +294,30 @@ def generate_day(conn: sqlite3.Connection, broadcast_date: date) -> int:
     )
 
     for block in blocks:
-        end_date = broadcast_date if block.end > block.start else broadcast_date + timedelta(days=1)
+        # A block's wall-clock time lands on the next day iff it's at/after
+        # midnight but before the 10:00 sign-on (e.g. the 02:00-05:00 tail after
+        # Adult Swim) - more robust than comparing end vs start, which mislabels
+        # a wholly-post-midnight block.
+        start_date = broadcast_date + timedelta(days=1) if block.start < OFF_AIR_END else broadcast_date
+        end_date = broadcast_date + timedelta(days=1) if block.end <= OFF_AIR_END else broadcast_date
+        block_start = combine_msk(start_date, block.start)
         block_end = combine_msk(end_date, block.end)
         if block_end <= current_time:
-            continue  # earlier blocks already drifted past this one's window entirely
+            continue  # an earlier block already ran past this one's window entirely
 
-        eligible = [sid for sid in series_ids if block.series_filter is None or series_names[sid] in block.series_filter]
-        current_time = _fill_block(conn, block, current_time, block_end, eligible, event_name, day_start_iso, msk_date)
+        # Keep each block starting on its wall-clock time even when an earlier
+        # block ran out of eligible content before its window ended - otherwise a
+        # category-restricted block (Adult Swim) would start hours early.
+        if current_time < block_start:
+            current_time = _fill_gap_with_cards(conn, current_time, block_start, block.name, event_name, msk_date)
+
+        eligible = [
+            sid for sid in series_ids if block_allows_series(block, series_names[sid], series_categories[sid])
+        ]
+        current_time = _fill_block(
+            conn, block, current_time, block_end, eligible, event_name, day_start_iso, msk_date,
+            eligible_film_ids=film_ids, film_repeat_days=film_repeat_days,
+        )
 
     off_air_start_nominal = combine_msk(broadcast_date + timedelta(days=1), OFF_AIR_START)
 
@@ -276,7 +339,9 @@ def generate_day(conn: sqlite3.Connection, broadcast_date: date) -> int:
     return rows_after - rows_before
 
 
-def generate_schedule(conn: sqlite3.Connection, start_date: date, days: int) -> dict[date, int]:
+def generate_schedule(
+    conn: sqlite3.Connection, start_date: date, days: int, film_repeat_days: int = 14
+) -> dict[date, int]:
     results: dict[date, int] = {}
     for i in range(days):
         broadcast_date = start_date + timedelta(days=i)
@@ -289,5 +354,5 @@ def generate_schedule(conn: sqlite3.Connection, start_date: date, days: int) -> 
         if already > 0:
             results[broadcast_date] = 0
             continue
-        results[broadcast_date] = generate_day(conn, broadcast_date)
+        results[broadcast_date] = generate_day(conn, broadcast_date, film_repeat_days=film_repeat_days)
     return results

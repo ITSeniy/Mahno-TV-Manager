@@ -15,7 +15,7 @@ from director import db
 from director.config import Config
 from director.ntsc_render import ensure_rendered, is_render_valid
 
-_TABLES = {"episode": "episodes", "ad": "ads", "bumper": "bumpers"}
+_TABLES = {"episode": "episodes", "ad": "ads", "bumper": "bumpers", "reel": "reels"}
 
 
 def _render_table(conn, config: Config, item_type: str) -> None:
@@ -54,7 +54,7 @@ def main() -> None:
         raise SystemExit(f"config.json is missing required field(s) for rendering: {', '.join(missing)}")
 
     conn = db.connect(config.db_path)
-    for item_type in ("episode", "ad", "bumper"):
+    for item_type in ("episode", "ad", "bumper", "reel"):
         _render_table(conn, config, item_type)
     conn.close()
 

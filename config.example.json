@@ -8,8 +8,17 @@
   "dashboard_port": 8766,
   "active_series": ["Show One", "Show Two"],
   "random_rotation_series": ["Show Two"],
+  "series_categories": {
+    "adult-animation": ["Show Two"],
+    "edutainment": [],
+    "auto": []
+  },
   "ntsc_rs_cli_path": "ntsc-rs-windows-standalone/bin/ntsc-rs-cli.exe",
   "ntsc_rs_settings_path": "ntsc-rs-windows-standalone/settings.json",
   "ntsc_render_cache_dir": "D:/TVLibrary/NtscCache",
-  "card_music_path": "D:/TVLibrary/Branding/card_music_loop.mp3"
+  "card_music_path": "D:/TVLibrary/Branding/card_music_loop.mp3",
+  "films_root": "D:/TVLibrary/Films",
+  "active_films": ["Film One", "Film Two"],
+  "film_categories": {},
+  "film_repeat_days": 14
 }

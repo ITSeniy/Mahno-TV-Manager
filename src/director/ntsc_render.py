@@ -22,7 +22,7 @@ import subprocess
 import sqlite3
 from pathlib import Path
 
-_TABLES = {"episode": "episodes", "ad": "ads", "bumper": "bumpers"}
+_TABLES = {"episode": "episodes", "ad": "ads", "bumper": "bumpers", "reel": "reels"}
 
 
 def cache_path_for(cache_dir: Path, item_type: str, item_id: int) -> Path:

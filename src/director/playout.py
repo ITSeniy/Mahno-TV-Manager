@@ -16,7 +16,9 @@ from pathlib import Path
 from director.ad_pods import pick_bumper
 from director.ntsc_render import is_render_valid
 
-_ITEM_TABLES = {"episode": "episodes", "ad": "ads", "bumper": "bumpers"}
+# 'film' and 'reel' both resolve to the reels table: the 'film' program_log row
+# points at the first reel, 'reel' rows at the rest.
+_ITEM_TABLES = {"episode": "episodes", "ad": "ads", "bumper": "bumpers", "reel": "reels", "film": "reels"}
 
 
 def _resolve_card(conn: sqlite3.Connection, item_id: int) -> tuple[str | None, bool]:

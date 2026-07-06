@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS series (
     name TEXT NOT NULL UNIQUE,
     root_path TEXT NOT NULL,
     rotation_mode TEXT NOT NULL DEFAULT 'sequential' CHECK (rotation_mode IN ('sequential', 'random')),
+    category TEXT NOT NULL DEFAULT 'cartoon',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -63,6 +64,39 @@ CREATE TABLE IF NOT EXISTS bumpers (
     rendered_source_mtime REAL,
     rendered_source_size INTEGER
 );
+
+-- Films are long-form tentpoles the user pre-splits into reels at natural
+-- ad-break points. A film mirrors a series; its reels mirror episodes (same
+-- rendered_* columns) so the ntsc-rs pre-render and playout resolve them with
+-- the existing machinery. The scheduler lays a film as one 'film' program_log
+-- row (the first reel, the EPG-visible programme marker) followed by 'reel'
+-- rows, with ad breaks between.
+CREATE TABLE IF NOT EXISTS films (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL UNIQUE,
+    root_path TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'film',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS reels (
+    id INTEGER PRIMARY KEY,
+    film_id INTEGER NOT NULL REFERENCES films(id) ON DELETE CASCADE,
+    reel_number INTEGER NOT NULL,
+    title TEXT,
+    file_path TEXT NOT NULL UNIQUE,
+    duration_seconds REAL,
+    width INTEGER,
+    height INTEGER,
+    file_mtime REAL,
+    file_size INTEGER,
+    scanned_at TEXT NOT NULL,
+    missing INTEGER NOT NULL DEFAULT 0,
+    rendered_path TEXT,
+    rendered_source_mtime REAL,
+    rendered_source_size INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_reels_film ON reels(film_id, reel_number);
 
 CREATE TABLE IF NOT EXISTS play_history (
     id INTEGER PRIMARY KEY,
@@ -172,6 +206,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     series_cols = {row["name"] for row in conn.execute("PRAGMA table_info(series)")}
     if "rotation_mode" not in series_cols:
         conn.execute("ALTER TABLE series ADD COLUMN rotation_mode TEXT NOT NULL DEFAULT 'sequential'")
+    if "category" not in series_cols:
+        conn.execute("ALTER TABLE series ADD COLUMN category TEXT NOT NULL DEFAULT 'cartoon'")
 
     for table in ("episodes", "ads", "bumpers"):
         cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}

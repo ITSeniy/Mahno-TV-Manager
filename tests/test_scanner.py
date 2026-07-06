@@ -7,6 +7,7 @@ from director.media_probe import MediaInfo
 from director.scanner import (
     parse_season_episode,
     parse_season_from_folder,
+    scan_films_root,
     scan_flat_root,
     scan_series_root,
 )
@@ -109,6 +110,34 @@ def test_scan_series_root_reads_season_from_parent_folder(tmp_path, monkeypatch)
     assert stats.errors == []
     rows = conn.execute("SELECT season, episode FROM episodes ORDER BY season").fetchall()
     assert [(r["season"], r["episode"]) for r in rows] == [(1, 1), (2, 1)]
+
+
+def test_scan_films_root_orders_reels_and_respects_allowlist(tmp_path, monkeypatch):
+    films = tmp_path / "films"
+    (films / "Терминатор").mkdir(parents=True)
+    (films / "Терминатор" / "02 - part.mkv").touch()
+    (films / "Терминатор" / "01 - part.mkv").touch()
+    (films / "Терминатор" / "03 - part.mkv").touch()
+    (films / "Не в списке").mkdir()
+    (films / "Не в списке" / "01.mkv").touch()
+
+    monkeypatch.setattr(
+        "director.scanner.probe",
+        lambda path: MediaInfo(duration_seconds=1500.0, width=720, height=480),
+    )
+
+    conn = db.connect(tmp_path / "data" / "library.db")
+    stats = scan_films_root(conn, films, active_films=["Терминатор"])
+
+    assert stats.errors == []
+    titles = [r["title"] for r in conn.execute("SELECT title FROM films")]
+    assert titles == ["Терминатор"]  # the non-allowlisted folder is skipped
+
+    fid = conn.execute("SELECT id FROM films WHERE title = 'Терминатор'").fetchone()["id"]
+    reels = conn.execute("SELECT reel_number, file_path FROM reels WHERE film_id = ? ORDER BY reel_number", (fid,)).fetchall()
+    # reels numbered by filename sort order: 01, 02, 03
+    assert [r["reel_number"] for r in reels] == [1, 2, 3]
+    assert reels[0]["file_path"].endswith("01 - part.mkv")
 
 
 def test_scan_flat_root_with_classify_splits_a_shared_folder(tmp_path, monkeypatch):

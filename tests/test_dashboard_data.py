@@ -83,6 +83,44 @@ def test_describe_item_for_a_card(tmp_path):
     assert describe_item(conn, row) == "[КАРТОЧКА:epg_next]"
 
 
+def _add_film(conn, title="Кино", reels=2):
+    conn.execute("INSERT INTO films (title, root_path) VALUES (?, ?)", (title, f"/{title}"))
+    fid = conn.execute("SELECT id FROM films WHERE title = ?", (title,)).fetchone()["id"]
+    ids = []
+    for i in range(1, reels + 1):
+        conn.execute(
+            "INSERT INTO reels (film_id, reel_number, file_path, duration_seconds, scanned_at) "
+            "VALUES (?, ?, ?, 1500, datetime('now'))",
+            (fid, i, f"/{title}/r{i}.mkv"),
+        )
+        ids.append(conn.execute("SELECT id FROM reels WHERE film_id = ? AND reel_number = ?", (fid, i)).fetchone()["id"])
+    return ids
+
+
+def test_describe_item_for_film_and_reel(tmp_path):
+    conn = make_db(tmp_path)
+    r1, r2 = _add_film(conn, "Кино", reels=2)
+
+    film_row = conn.execute("SELECT ? AS item_type, ? AS item_id", ("film", r1)).fetchone()
+    reel_row = conn.execute("SELECT ? AS item_type, ? AS item_id", ("reel", r2)).fetchone()
+    assert describe_item(conn, film_row) == "Фильм: Кино"
+    assert describe_item(conn, reel_row) == "Фильм: Кино (ч.2)"
+
+
+def test_program_items_after_shows_the_film_marker_not_its_reels(tmp_path):
+    conn = make_db(tmp_path)
+    r1, r2 = _add_film(conn, "Кино", reels=2)
+    sid = add_series(conn, "Show")
+    ep = add_episode(conn, sid, 1, 1)
+    log_row(conn, T0, T0 + timedelta(minutes=25), item_type="film", item_id=r1)
+    log_row(conn, T0 + timedelta(minutes=25), T0 + timedelta(minutes=50), item_type="reel", item_id=r2)
+    log_row(conn, T0 + timedelta(minutes=50), T0 + timedelta(minutes=70), item_id=ep)
+
+    upcoming = program_items_after(conn, (T0 - timedelta(minutes=1)).isoformat(), count=5)
+    # the film shows once (its marker); the reel continuation is not a programme.
+    assert [r["item_type"] for r in upcoming] == ["film", "episode"]
+
+
 def test_program_items_after_returns_only_upcoming_programmes(tmp_path):
     conn = make_db(tmp_path)
     sid = add_series(conn, "Show")

@@ -110,6 +110,24 @@ def _add_card(conn, status, rendered_path=None, kind="weather", target=47):
     return conn.execute("SELECT id FROM cards ORDER BY id DESC LIMIT 1").fetchone()["id"]
 
 
+def test_resolve_media_path_for_a_reel_and_film_marker(tmp_path):
+    conn = make_db(tmp_path)
+    conn.execute("INSERT INTO films (title, root_path) VALUES ('K', '/k')")
+    fid = conn.execute("SELECT id FROM films WHERE title = 'K'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO reels (film_id, reel_number, file_path, duration_seconds, scanned_at) "
+        "VALUES (?, 1, '/k/r1.mkv', 1500, datetime('now'))",
+        (fid,),
+    )
+    rid = conn.execute("SELECT id FROM reels").fetchone()["id"]
+
+    # both the 'film' marker and 'reel' rows resolve to the reels table
+    reel_row = conn.execute("SELECT ? AS item_type, ? AS item_id", ("reel", rid)).fetchone()
+    film_row = conn.execute("SELECT ? AS item_type, ? AS item_id", ("film", rid)).fetchone()
+    assert resolve_media_path(conn, reel_row) == ("/k/r1.mkv", False)
+    assert resolve_media_path(conn, film_row) == ("/k/r1.mkv", False)
+
+
 def test_resolve_media_path_for_a_rendered_card(tmp_path):
     conn = make_db(tmp_path)
     rendered = tmp_path / "card.mp4"

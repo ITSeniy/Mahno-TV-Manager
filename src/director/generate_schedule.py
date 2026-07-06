@@ -23,7 +23,7 @@ def main() -> None:
     config = Config.load()
     conn = db.connect(config.db_path)
 
-    results = generate_schedule(conn, start_date, args.days)
+    results = generate_schedule(conn, start_date, args.days, film_repeat_days=config.film_repeat_days)
     for day, count in results.items():
         status = f"{count} items" if count else "уже сгенерировано, пропущено"
         print(f"{day.isoformat()}: {status}")

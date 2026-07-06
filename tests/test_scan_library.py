@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from director import db
-from director.scan_library import apply_rotation_modes, classify_ad, classify_bumper
+from director.scan_library import apply_categories, apply_rotation_modes, classify_ad, classify_bumper
 
 
 @pytest.mark.parametrize(
@@ -55,3 +55,25 @@ def test_apply_rotation_modes_is_idempotent_and_resets_on_rerun(tmp_path):
     # Re-running with an updated (now empty) list must flip it back, not just leave stale state.
     apply_rotation_modes(conn, [])
     assert conn.execute("SELECT rotation_mode FROM series").fetchone()["rotation_mode"] == "sequential"
+
+
+def test_apply_categories_defaults_to_cartoon_and_sets_named(tmp_path):
+    conn = db.connect(tmp_path / "lib.db")
+    for name in ("Smeshariki", "Futurama", "Galileo"):
+        conn.execute("INSERT INTO series (name, root_path) VALUES (?, ?)", (name, f"/{name}"))
+
+    apply_categories(conn, {"adult-animation": ["Futurama"], "edutainment": ["Galileo"]})
+
+    cats = {r["name"]: r["category"] for r in conn.execute("SELECT name, category FROM series")}
+    assert cats == {"Smeshariki": "cartoon", "Futurama": "adult-animation", "Galileo": "edutainment"}
+
+
+def test_apply_categories_resets_on_rerun(tmp_path):
+    conn = db.connect(tmp_path / "lib.db")
+    conn.execute("INSERT INTO series (name, root_path) VALUES ('Futurama', '/f')")
+
+    apply_categories(conn, {"adult-animation": ["Futurama"]})
+    assert conn.execute("SELECT category FROM series").fetchone()["category"] == "adult-animation"
+
+    apply_categories(conn, {})  # removed from config -> back to the default
+    assert conn.execute("SELECT category FROM series").fetchone()["category"] == "cartoon"

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from director import db
 from director.config import Config
-from director.scanner import ScanStats, scan_flat_root, scan_series_root
+from director.scanner import ScanStats, scan_films_root, scan_flat_root, scan_series_root
 
 
 def classify_ad(path: Path) -> str | None:
@@ -43,6 +43,30 @@ def apply_rotation_modes(conn, random_series: list[str]) -> None:
     conn.commit()
 
 
+def apply_categories(conn, series_categories: dict[str, list[str]]) -> None:
+    """Curation call like apply_rotation_modes: unlisted series stay 'cartoon',
+    each listed name gets its category (drives dayparting and themed blocks -
+    e.g. adult-animation only airs in the Adult Swim night block)."""
+    conn.execute("UPDATE series SET category = 'cartoon'")
+    for category, names in series_categories.items():
+        if not names:
+            continue
+        placeholders = ",".join("?" * len(names))
+        conn.execute(f"UPDATE series SET category = ? WHERE name IN ({placeholders})", (category, *names))
+    conn.commit()
+
+
+def apply_film_categories(conn, film_categories: dict[str, list[str]]) -> None:
+    """Counterpart to apply_categories for films (keyed by title, default 'film')."""
+    conn.execute("UPDATE films SET category = 'film'")
+    for category, titles in film_categories.items():
+        if not titles:
+            continue
+        placeholders = ",".join("?" * len(titles))
+        conn.execute(f"UPDATE films SET category = ? WHERE title IN ({placeholders})", (category, *titles))
+    conn.commit()
+
+
 def _report(label: str, stats: ScanStats) -> None:
     print(f"{label}: +{stats.added} added, {stats.updated} updated, "
           f"{stats.unchanged} unchanged, {stats.missing} now missing")
@@ -56,6 +80,11 @@ def main() -> None:
 
     _report("series", scan_series_root(conn, config.series_root, config.active_series))
     apply_rotation_modes(conn, config.random_rotation_series)
+    apply_categories(conn, config.series_categories)
+
+    if config.films_root is not None:
+        _report("films", scan_films_root(conn, config.films_root, config.active_films))
+        apply_film_categories(conn, config.film_categories)
 
     shared_folder = config.ads_root == config.bumpers_root
     ad_classifier = classify_ad if shared_folder else None

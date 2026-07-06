@@ -39,15 +39,24 @@ def describe_item(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     if item_type == "bumper":
         bumper = conn.execute("SELECT file_path, kind FROM bumpers WHERE id = ?", (item_id,)).fetchone()
         return f"[ЗАСТАВКА:{bumper['kind']}] {bumper['file_path']}" if bumper else "заставка (файл не найден)"
+    if item_type in ("film", "reel"):
+        r = conn.execute(
+            "SELECT f.title, r.reel_number FROM reels r JOIN films f ON f.id = r.film_id WHERE r.id = ?",
+            (item_id,),
+        ).fetchone()
+        if not r:
+            return "фильм (файл не найден)"
+        return f"Фильм: {r['title']}" if item_type == "film" else f"Фильм: {r['title']} (ч.{r['reel_number']})"
     if item_type == "card":
         card = conn.execute("SELECT kind FROM cards WHERE id = ?", (item_id,)).fetchone()
         return f"[КАРТОЧКА:{card['kind']}]" if card else "карточка (не найдена)"
     return item_type
 
 
-# Program items = what a viewer would call "a programme": episodes and (later)
-# films/reels, i.e. everything the on-screen EPG lists, skipping ads/bumpers/cards.
-PROGRAM_ITEM_TYPES = ("episode", "film", "reel")
+# Program items = what a viewer would call "a programme": episodes and films.
+# A film is a run of reels but shows in the EPG as ONE entry, so only its 'film'
+# marker row counts here - the 'reel' continuation rows are skipped like ads.
+PROGRAM_ITEM_TYPES = ("episode", "film")
 
 
 def program_items_after(conn: sqlite3.Connection, start_iso: str, count: int = 3) -> list[sqlite3.Row]:

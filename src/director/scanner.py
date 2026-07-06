@@ -152,6 +152,41 @@ def scan_series_root(
     return stats
 
 
+def scan_films_root(
+    conn: sqlite3.Connection,
+    films_root: Path,
+    active_films: list[str] | None = None,
+) -> ScanStats:
+    """Each subfolder films_root/<Film Title>/ is a film; the video files inside
+    are its reels, ordered by filename (the user pre-splits at ad-break points
+    and names them to sort - '01 - ...', '02 - ...'). active_films is an
+    allowlist of folder names, mirroring active_series."""
+    stats = ScanStats()
+    if not films_root.is_dir():
+        stats.errors.append(f"films_root not found: {films_root}")
+        return stats
+
+    allowed = set(active_films) if active_films is not None else None
+
+    for film_dir in sorted(p for p in films_root.iterdir() if p.is_dir()):
+        if allowed is not None and film_dir.name not in allowed:
+            continue
+
+        film_id = _upsert_film(conn, film_dir.name, film_dir)
+        found_paths: set[str] = set()
+        for reel_number, file_path in enumerate(iter_video_files(film_dir), start=1):
+            found_paths.add(str(file_path.resolve()))
+            try:
+                _upsert_reel(conn, film_id, reel_number, file_path, stats)
+            except Exception as exc:  # ffprobe failures, permission errors, etc.
+                stats.errors.append(f"{file_path}: {exc}")
+
+        stats.missing += _mark_missing(conn, "reels", "film_id = ?", (film_id,), found_paths)
+
+    conn.commit()
+    return stats
+
+
 def scan_flat_root(
     conn: sqlite3.Connection,
     root: Path,
@@ -241,6 +276,65 @@ def _upsert_episode(
         """,
         (
             series_id, season, episode, file_path.stem, resolved,
+            info.duration_seconds, info.width, info.height,
+            stat.st_mtime, stat.st_size, _now(),
+        ),
+    )
+    stats.updated += 1 if row is not None else 0
+    stats.added += 1 if row is None else 0
+
+
+def _upsert_film(conn: sqlite3.Connection, title: str, root_path: Path) -> int:
+    conn.execute(
+        "INSERT INTO films (title, root_path) VALUES (?, ?) "
+        "ON CONFLICT(title) DO UPDATE SET root_path = excluded.root_path",
+        (title, str(root_path.resolve())),
+    )
+    return conn.execute("SELECT id FROM films WHERE title = ?", (title,)).fetchone()["id"]
+
+
+def _upsert_reel(
+    conn: sqlite3.Connection,
+    film_id: int,
+    reel_number: int,
+    file_path: Path,
+    stats: ScanStats,
+) -> None:
+    resolved = str(file_path.resolve())
+    stat = file_path.stat()
+    row = conn.execute("SELECT * FROM reels WHERE file_path = ?", (resolved,)).fetchone()
+
+    if not _needs_reprobe(row, stat.st_mtime, stat.st_size):
+        # File content unchanged, but its position may have shifted (a reel
+        # inserted/renamed earlier in the folder), so keep reel_number current.
+        conn.execute(
+            "UPDATE reels SET missing = 0, reel_number = ?, scanned_at = ? WHERE file_path = ?",
+            (reel_number, _now(), resolved),
+        )
+        stats.unchanged += 1
+        return
+
+    info = probe(file_path)
+    conn.execute(
+        """
+        INSERT INTO reels
+            (film_id, reel_number, title, file_path, duration_seconds,
+             width, height, file_mtime, file_size, scanned_at, missing)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        ON CONFLICT(file_path) DO UPDATE SET
+            film_id = excluded.film_id,
+            reel_number = excluded.reel_number,
+            title = excluded.title,
+            duration_seconds = excluded.duration_seconds,
+            width = excluded.width,
+            height = excluded.height,
+            file_mtime = excluded.file_mtime,
+            file_size = excluded.file_size,
+            scanned_at = excluded.scanned_at,
+            missing = 0
+        """,
+        (
+            film_id, reel_number, file_path.stem, resolved,
             info.duration_seconds, info.width, info.height,
             stat.st_mtime, stat.st_size, _now(),
         ),
