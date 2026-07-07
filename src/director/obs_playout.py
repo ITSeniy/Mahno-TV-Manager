@@ -16,9 +16,11 @@ from director.vhs_effect import NTSC_FILTER_NAME, VHS_FILTER_NAME
 
 ON_AIR_SCENE = "ON_AIR"
 OFF_AIR_SCENE = "OFF_AIR"
+SMS_CHAT_SCENE = "SMS_CHAT"
 MEDIA_SOURCE = "program_player"
 OFF_AIR_BG_SOURCE = "off_air_background"
 OFF_AIR_TEXT_SOURCE = "off_air_label"
+SMS_CHAT_SOURCE = "sms_chat_browser"
 
 RESTART_ACTION = "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"
 
@@ -111,9 +113,28 @@ def ensure_scenes(client: obsws.ReqClient) -> None:
         )
 
 
+def ensure_sms_scene(client: obsws.ReqClient, url: str) -> None:
+    """Full-frame browser source for the night SMS-chat scene, pointed at the
+    ticker server's /sms page. The schedule switches to this scene for the
+    04:00-05:00 sms_chat block (see apply_item). Created once; not re-touched, so
+    manual tweaks in OBS survive restarts (same policy as overlays)."""
+    if SMS_CHAT_SCENE not in _scene_names(client):
+        client.create_scene(SMS_CHAT_SCENE)
+    if SMS_CHAT_SOURCE not in _input_names(client):
+        video = client.get_video_settings()
+        browser_kind = _resolve_kind(client, "browser_source")
+        client.create_input(
+            SMS_CHAT_SCENE, SMS_CHAT_SOURCE, browser_kind,
+            {"url": url, "width": video.base_width, "height": video.base_height}, True,
+        )
+
+
 def apply_item(client: obsws.ReqClient, item_type: str, file_path: str | None, is_ntsc_rendered: bool) -> None:
     if item_type == "off_air":
         client.set_current_program_scene(OFF_AIR_SCENE)
+        return
+    if item_type == "sms_chat":
+        client.set_current_program_scene(SMS_CHAT_SCENE)
         return
 
     client.set_input_settings(MEDIA_SOURCE, {"local_file": file_path, "is_local_file": True}, True)

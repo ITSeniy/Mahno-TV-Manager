@@ -55,8 +55,11 @@ def render_pending_cards(
     job so both behave identically."""
     purge_expired_cards(conn, now_utc)
 
-    # One forecast for the day (idempotent per MSK date), reused by every weather card.
+    # Refresh the day's service pools once (idempotent per MSK date). Weather is
+    # passed to every card; currency/horoscope are read from the DB by the render.
     weather = card_content.refresh_weather(conn, secrets.gemini_api_keys, now_utc)
+    card_content.refresh_currency(conn, secrets.gemini_api_keys, now_utc)
+    card_content.refresh_horoscope(conn, secrets.gemini_api_keys, now_utc)
 
     rows = conn.execute(
         "SELECT * FROM cards WHERE status != 'rendered' AND slot_start >= ? ORDER BY slot_start",

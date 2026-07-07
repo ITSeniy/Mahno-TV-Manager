@@ -71,6 +71,12 @@ def test_describe_item_for_each_type(tmp_path):
     assert describe_item(conn, off_air_row) == "ТЕХПЕРЕРЫВ"
 
 
+def test_describe_item_for_sms_chat(tmp_path):
+    conn = make_db(tmp_path)
+    row = conn.execute("SELECT 'sms_chat' AS item_type, NULL AS item_id").fetchone()
+    assert describe_item(conn, row) == "Ночной SMS-чат"
+
+
 def test_describe_item_for_a_card(tmp_path):
     conn = make_db(tmp_path)
     conn.execute(

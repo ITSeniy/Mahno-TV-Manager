@@ -18,6 +18,11 @@ def running_server(tmp_path: Path):
         "(datetime('now'), '2026-07-06', 'gemini', ?)",
         (json.dumps(["СТРОКА ПЕРВАЯ", "СТРОКА ВТОРАЯ"], ensure_ascii=False),),
     )
+    conn.execute(
+        "INSERT INTO service_pools (kind, generated_at, msk_date, source, payload_json) VALUES "
+        "('sms', datetime('now'), '2026-07-06', 'gemini', ?)",
+        (json.dumps(["ВАСЯ, ТАМБОВ: ПРИВЕТ", "ЛЕНА: КТО СМОТРИТ?"], ensure_ascii=False),),
+    )
     conn.commit()
 
     server = start_server(db_path, port=0)
@@ -42,6 +47,21 @@ def test_ticker_json_reflects_current_pool(running_server):
         assert "application/json" in resp.headers["Content-Type"]
         data = json.loads(resp.read().decode("utf-8"))
         assert data["lines"] == ["СТРОКА ПЕРВАЯ", "СТРОКА ВТОРАЯ"]
+
+
+def test_sms_page_serves_chat_html(running_server):
+    with urllib.request.urlopen(f"{running_server}/sms") as resp:
+        assert resp.status == 200
+        assert "text/html" in resp.headers["Content-Type"]
+        body = resp.read().decode("utf-8")
+        assert "/sms.json" in body and "SMS" in body
+
+
+def test_sms_json_reflects_the_sms_pool(running_server):
+    with urllib.request.urlopen(f"{running_server}/sms.json") as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode("utf-8"))
+        assert data["lines"] == ["ВАСЯ, ТАМБОВ: ПРИВЕТ", "ЛЕНА: КТО СМОТРИТ?"]
 
 
 def test_unknown_path_returns_404(running_server):

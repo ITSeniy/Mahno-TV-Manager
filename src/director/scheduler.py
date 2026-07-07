@@ -23,7 +23,7 @@ from director.ad_pods import AD_CAP_SECONDS_PER_HOUR, ad_seconds_in_trailing_hou
 from director.blocks import OFF_AIR_END, OFF_AIR_START, BlockTemplate, block_allows_series, blocks_for_date
 from director.films import pick_next_film
 from director.rotation import pick_next_episode
-from director.timeutil import ceil_quarter_msk, combine_msk, next_quarter_msk, utc_to_msk
+from director.timeutil import ceil_quarter_msk, combine_msk, next_quarter_msk
 
 MIN_SEGMENT_SECONDS = 30  # below this, don't bother trying to schedule anything more in a block
 
@@ -37,6 +37,13 @@ CARD_MAX_SECONDS = 120.0   # keep any single static plate reasonably short; spli
 CLOCK_MAX_SECONDS = 30.0   # gaps this small just get a clock/ident plate
 SIGN_ON_LABEL = "начало эфира"  # block_name for the morning sign-on slate (guide + weather)
 
+# Medium anchor gaps rotate through these continuity cards - "Далее" most often,
+# with weather/currency/horoscope interspersed for variety.
+_MEDIUM_CARD_ROTATION = (
+    cards.KIND_EPG_NEXT, cards.KIND_WEATHER, cards.KIND_EPG_NEXT,
+    cards.KIND_CURRENCY, cards.KIND_EPG_NEXT, cards.KIND_HOROSCOPE,
+)
+
 
 def _write_log(
     conn: sqlite3.Connection,
@@ -47,7 +54,7 @@ def _write_log(
     event_name: str | None,
     end_time: datetime | None = None,
 ) -> datetime:
-    if item_type == "off_air":
+    if item_type in ("off_air", "sms_chat"):  # scene-only items: no file, explicit end_time
         item_id = None
         assert end_time is not None
     else:
@@ -132,7 +139,6 @@ def _fill_gap_with_cards(
     first (e.g. the detailed guide + weather at sign-on); the rest are chosen by
     gap size and time of day."""
     lead = list(lead_kinds)
-    is_morning = utc_to_msk(current_time).hour < 13
     index = 0
     while True:
         gap = (target - current_time).total_seconds()
@@ -145,10 +151,8 @@ def _fill_gap_with_cards(
             kind = lead.pop(0)
         elif chunk <= CLOCK_MAX_SECONDS:
             kind = cards.KIND_CLOCK
-        elif is_morning and index % 3 == 0:
-            kind = cards.KIND_WEATHER
         else:
-            kind = cards.KIND_EPG_NEXT
+            kind = _MEDIUM_CARD_ROTATION[index % len(_MEDIUM_CARD_ROTATION)]
         current_time = _reserve_card(conn, current_time, chunk, block_name, event_name, msk_date, kind)
         index += 1
     return current_time
@@ -198,6 +202,10 @@ def _fill_block(
 ) -> datetime:
     recent_series_window: list[int] = []
     last_ad_break = current_time
+
+    if block.content == "sms_chat":
+        # One live SMS-chat scene spans the whole block; playout switches to it.
+        return _write_log(conn, current_time, "sms_chat", None, block.name, event_name, end_time=block_end)
 
     # Align to a quarter anchor if we arrived mid-quarter (only happens right
     # after the day's sign-on slate). Every slot below already lands on one.

@@ -13,6 +13,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from director.card_content import get_sms
 from director.ticker_content import get_current_pool
 
 PAGE = """<!DOCTYPE html>
@@ -102,6 +103,68 @@ PAGE = """<!DOCTYPE html>
 """
 
 
+# Full-screen night SMS-chat: viewer messages credits-roll up the screen under a
+# "send SMS to 1121" header. OBS points the SMS_CHAT scene's browser source here;
+# the schedule switches to that scene for the 04:00-05:00 sms_chat block.
+SMS_PAGE = """<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>SMS-чат</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden;
+    font-family: Tahoma, "Trebuchet MS", Arial, sans-serif; color: #f4f4ff;
+    background: linear-gradient(160deg, #101a4a 0%, #1c2f7a 55%, #0a1030 100%); }
+  .head { position: fixed; top: 0; left: 0; right: 0; height: 15%;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(#1c2f7a, #101a4a); border-bottom: 3px solid #ffe14d;
+    color: #ffe14d; font-weight: bold; letter-spacing: 2px; text-transform: uppercase;
+    text-shadow: 2px 2px 0 rgba(0,0,0,0.4); z-index: 2; }
+  .roll { position: absolute; top: 15%; left: 0; right: 0; bottom: 0; overflow: hidden; padding: 0 4%; }
+  .track { display: flex; flex-direction: column; gap: 1.6%;
+    animation-name: roll; animation-timing-function: linear; animation-iteration-count: infinite;
+    animation-duration: var(--dur, 40s); }
+  .msg { line-height: 1.25; text-shadow: 1px 1px 2px rgba(0,0,0,0.6); }
+  .msg b { color: #7fe0ff; }
+  @keyframes roll { from { transform: translateY(65%); } to { transform: translateY(-50%); } }
+</style>
+</head>
+<body>
+  <div class="head" id="head">&#9733; НОЧНОЙ ЧАТ &middot; ОТПРАВЬ SMS НА 1121 &#9733;</div>
+  <div class="roll"><div class="track" id="track"></div></div>
+  <script>
+    const REFRESH_MS = 120000;
+    function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+    function render(lines) {
+      const track = document.getElementById("track");
+      track.innerHTML = "";
+      const fs = Math.max(12, Math.round(window.innerHeight * 0.045));
+      document.getElementById("head").style.fontSize = Math.round(window.innerHeight * 0.05) + "px";
+      for (let rep = 0; rep < 2; rep++) {
+        for (const line of lines) {
+          const div = document.createElement("div");
+          div.className = "msg";
+          div.style.fontSize = fs + "px";
+          const i = line.indexOf(":");
+          if (i > 0) { div.innerHTML = "<b>" + esc(line.slice(0, i + 1)) + "</b> " + esc(line.slice(i + 1)); }
+          else { div.textContent = line; }
+          track.appendChild(div);
+        }
+      }
+      track.style.setProperty("--dur", Math.max(30, lines.length * 3) + "s");
+    }
+    async function refresh() {
+      try { const r = await fetch("/sms.json", { cache: "no-store" }); render((await r.json()).lines || []); }
+      catch (e) { /* keep the current roll on a failed fetch */ }
+    }
+    refresh();
+    setInterval(refresh, REFRESH_MS);
+  </script>
+</body>
+</html>
+"""
+
+
 def _make_handler(db_path: Path):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A002 - stdlib signature
@@ -110,15 +173,22 @@ def _make_handler(db_path: Path):
         def do_GET(self):
             if self.path in ("/", "/index.html"):
                 self._send(200, "text/html; charset=utf-8", PAGE.encode("utf-8"))
+            elif self.path == "/sms":
+                self._send(200, "text/html; charset=utf-8", SMS_PAGE.encode("utf-8"))
             elif self.path == "/ticker.json":
-                conn = sqlite3.connect(db_path)
-                conn.row_factory = sqlite3.Row
-                lines = get_current_pool(conn)
-                conn.close()
-                body = json.dumps({"lines": lines}, ensure_ascii=False).encode("utf-8")
-                self._send(200, "application/json; charset=utf-8", body)
+                self._send_feed(get_current_pool)
+            elif self.path == "/sms.json":
+                self._send_feed(get_sms)
             else:
                 self._send(404, "text/plain; charset=utf-8", b"not found")
+
+        def _send_feed(self, get_lines) -> None:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            lines = get_lines(conn)
+            conn.close()
+            body = json.dumps({"lines": lines}, ensure_ascii=False).encode("utf-8")
+            self._send(200, "application/json; charset=utf-8", body)
 
         def _send(self, status: int, content_type: str, body: bytes) -> None:
             self.send_response(status)

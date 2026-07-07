@@ -1,7 +1,8 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 from director import cards, db
-from director.card_render import _split_weather, card_html_pages, is_card_render_valid
+from director.card_render import _split_pipe, _split_weather, card_html_pages, is_card_render_valid
 
 T0 = datetime(2026, 7, 6, 7, 0, tzinfo=timezone.utc)  # 10:00 MSK
 
@@ -58,6 +59,37 @@ def test_weather_card_html_uses_supplied_lines(tmp_path):
     card = _reserve(conn, cards.KIND_WEATHER)
     (html,) = card_html_pages(conn, card, weather_lines=["МОСКВА +19 ЯСНО"])
     assert "ПОГОДА" in html and "МОСКВА" in html and "+19 ЯСНО" in html
+
+
+def _put_service_pool(conn, kind, lines):
+    conn.execute(
+        "INSERT INTO service_pools (kind, generated_at, msk_date, source, payload_json) "
+        "VALUES (?, '', '2026-07-06', 'gemini', ?)",
+        (kind, json.dumps(lines)),
+    )
+    conn.commit()
+
+
+def test_split_pipe_separates_label_from_value():
+    assert _split_pipe("ЕВРО|35 РУБ 40 КОП") == ("ЕВРО", "35 РУБ 40 КОП")
+    assert _split_pipe("без черты") == ("без черты", "")
+
+
+def test_currency_card_html_reads_the_pool(tmp_path):
+    conn = make_db(tmp_path)
+    _put_service_pool(conn, "currency", ["ДОЛЛАР США|30 РУБ 15 КОП", "ЕВРО|35 РУБ 40 КОП"])
+    card = _reserve(conn, cards.KIND_CURRENCY)
+    (html,) = card_html_pages(conn, card, weather_lines=[])
+    assert "КУРС ВАЛЮТ" in html and "ДОЛЛАР США" in html and "30 РУБ 15 КОП" in html
+
+
+def test_horoscope_card_html_paginates_twelve_signs(tmp_path):
+    conn = make_db(tmp_path)
+    _put_service_pool(conn, "horoscope", [f"ЗНАК{i}|фраза {i}" for i in range(12)])
+    card = _reserve(conn, cards.KIND_HOROSCOPE, target=120)
+    htmls = card_html_pages(conn, card, weather_lines=[])
+    assert len(htmls) == 2  # 12 signs, 6 per page
+    assert "ГОРОСКОП" in htmls[0]
 
 
 def test_clock_card_html_shows_the_slot_time(tmp_path):

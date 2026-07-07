@@ -58,7 +58,7 @@ def resolve_media_path(conn: sqlite3.Connection, row: sqlite3.Row) -> tuple[str 
         return _resolve_card(conn, row["item_id"])
 
     table = _ITEM_TABLES.get(row["item_type"])
-    if table is None:  # off_air
+    if table is None:  # off_air / sms_chat - no file; apply_item switches to the right scene
         return None, False
 
     result = conn.execute(f"SELECT * FROM {table} WHERE id = ?", (row["item_id"],)).fetchone()

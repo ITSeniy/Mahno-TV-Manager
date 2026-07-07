@@ -50,6 +50,8 @@ def describe_item(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     if item_type == "card":
         card = conn.execute("SELECT kind FROM cards WHERE id = ?", (item_id,)).fetchone()
         return f"[КАРТОЧКА:{card['kind']}]" if card else "карточка (не найдена)"
+    if item_type == "sms_chat":
+        return "Ночной SMS-чат"
     return item_type
 
 

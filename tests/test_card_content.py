@@ -75,6 +75,41 @@ def test_get_current_weather_defaults_to_fallback_when_empty(tmp_path):
     assert get_current_weather(make_db(tmp_path)) == WEATHER_FALLBACK
 
 
+def _boom(*_a, **_k):
+    raise RuntimeError("no quota")
+
+
+def test_refresh_currency_generates_then_caches_per_day(monkeypatch, tmp_path):
+    conn = make_db(tmp_path)
+    monkeypatch.setattr(card_content.gemini_client, "generate_text", lambda k, p: "ДОЛЛАР США|30 РУБ\nЕВРО|35 РУБ")
+
+    cur = card_content.refresh_currency(conn, ["k"], T0)
+    assert cur == ["ДОЛЛАР США|30 РУБ", "ЕВРО|35 РУБ"]
+    assert card_content.get_currency(conn) == cur
+
+    monkeypatch.setattr(card_content.gemini_client, "generate_text", _boom)
+    assert card_content.refresh_currency(conn, ["k"], T0 + timedelta(hours=1)) == cur  # cached, not regenerated
+    assert conn.execute("SELECT source FROM service_pools WHERE kind = 'currency'").fetchone()["source"] == "gemini"
+
+
+def test_refresh_horoscope_falls_back_on_error(monkeypatch, tmp_path):
+    conn = make_db(tmp_path)
+    monkeypatch.setattr(card_content.gemini_client, "generate_text", _boom)
+    assert card_content.refresh_horoscope(conn, ["k"], T0) == card_content.HOROSCOPE_FALLBACK
+    assert conn.execute("SELECT source FROM service_pools WHERE kind = 'horoscope'").fetchone()["source"] == "fallback"
+
+
+def test_get_currency_defaults_to_fallback_when_empty(tmp_path):
+    assert card_content.get_currency(make_db(tmp_path)) == card_content.CURRENCY_FALLBACK
+
+
+def test_refresh_sms_falls_back_on_error(monkeypatch, tmp_path):
+    conn = make_db(tmp_path)
+    monkeypatch.setattr(card_content.gemini_client, "generate_text", _boom)
+    assert card_content.refresh_sms(conn, ["k"], T0) == card_content.SMS_FALLBACK
+    assert card_content.get_sms(conn) == card_content.SMS_FALLBACK
+
+
 def test_day_programmes_lists_only_shows_with_msk_times(tmp_path):
     conn = make_db(tmp_path)
     e1 = _add_prog(conn, "Avatar")

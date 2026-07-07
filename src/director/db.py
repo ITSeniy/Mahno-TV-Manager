@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS program_log (
     id INTEGER PRIMARY KEY,
     start_time TEXT NOT NULL,
     end_time TEXT NOT NULL,
-    item_type TEXT NOT NULL CHECK (item_type IN ('episode', 'ad', 'bumper', 'card', 'film', 'reel', 'off_air')),
+    item_type TEXT NOT NULL CHECK (item_type IN ('episode', 'ad', 'bumper', 'card', 'film', 'reel', 'sms_chat', 'off_air')),
     item_id INTEGER,
     block_name TEXT,
     event_name TEXT,
@@ -157,6 +157,19 @@ CREATE TABLE IF NOT EXISTS weather_pools (
     forecast_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_weather_pools_msk_date ON weather_pools(msk_date);
+
+-- Generic per-MSK-day text pool for the service layer (currency rates,
+-- horoscope, night SMS-chat) - same idempotent pattern as weather/ticker,
+-- generalized by `kind` so new service content doesn't need a new table.
+CREATE TABLE IF NOT EXISTS service_pools (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,             -- 'currency' | 'horoscope' | 'sms'
+    generated_at TEXT NOT NULL,
+    msk_date TEXT NOT NULL,
+    source TEXT NOT NULL CHECK (source IN ('gemini', 'fallback')),
+    payload_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_service_pools_kind_date ON service_pools(kind, msk_date);
 """
 
 
@@ -171,8 +184,8 @@ def _widen_program_log_item_type(conn: sqlite3.Connection) -> None:
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'program_log'"
     ).fetchone()
-    if row is None or "'card'" in row["sql"]:
-        return  # fresh DB (created from SCHEMA with the new constraint) or already migrated
+    if row is None or "'sms_chat'" in row["sql"]:
+        return  # fresh DB (created from SCHEMA with the current constraint) or already migrated
 
     conn.executescript(
         """
@@ -182,7 +195,7 @@ def _widen_program_log_item_type(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY,
             start_time TEXT NOT NULL,
             end_time TEXT NOT NULL,
-            item_type TEXT NOT NULL CHECK (item_type IN ('episode', 'ad', 'bumper', 'card', 'film', 'reel', 'off_air')),
+            item_type TEXT NOT NULL CHECK (item_type IN ('episode', 'ad', 'bumper', 'card', 'film', 'reel', 'sms_chat', 'off_air')),
             item_id INTEGER,
             block_name TEXT,
             event_name TEXT,

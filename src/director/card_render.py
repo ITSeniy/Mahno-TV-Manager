@@ -43,6 +43,12 @@ def _split_weather(line: str) -> tuple[str, str]:
     return (m.group(1).strip(), m.group(2).strip()) if m else (line, "")
 
 
+def _split_pipe(line: str) -> tuple[str, str]:
+    """currency/horoscope lines are 'LABEL|value' - two-column plate rows."""
+    left, sep, right = line.partition("|")
+    return (left.strip(), right.strip()) if sep else (line.strip(), "")
+
+
 def card_html_pages(conn: sqlite3.Connection, card: sqlite3.Row, weather_lines: list[str]) -> list[str]:
     kind = card["kind"]
     if kind == cards.KIND_EPG_DAY:
@@ -56,6 +62,15 @@ def card_html_pages(conn: sqlite3.Connection, card: sqlite3.Row, weather_lines: 
     if kind == cards.KIND_WEATHER:
         rows = [_split_weather(line) for line in (weather_lines or card_content.WEATHER_FALLBACK)]
         return [card_templates.weather_html(rows)]
+    if kind == cards.KIND_CURRENCY:
+        # weather is passed in (refreshed once by the batch); currency/horoscope
+        # read their already-refreshed pool straight from the DB.
+        rows = [_split_pipe(line) for line in card_content.get_currency(conn)]
+        return [card_templates.currency_html(rows)]
+    if kind == cards.KIND_HOROSCOPE:
+        items = [_split_pipe(line) for line in card_content.get_horoscope(conn)]
+        pages = [items[i : i + 6] for i in range(0, len(items), 6)] or [[]]
+        return [card_templates.horoscope_html(p) for p in pages]
     if kind == cards.KIND_CLOCK:
         return [card_templates.clock_html(utc_to_msk(datetime.fromisoformat(card["slot_start"])).strftime("%H:%M"))]
     return [card_templates.clock_html("")]  # unknown kind -> a neutral plate rather than a crash

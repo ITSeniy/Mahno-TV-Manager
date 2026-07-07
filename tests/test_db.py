@@ -82,6 +82,43 @@ def test_connect_adds_category_column_to_a_pre_category_series_table(tmp_path):
     assert row["category"] == "cartoon"  # new column backfilled with the default
 
 
+_CARD_ERA_PROGRAM_LOG = """
+CREATE TABLE program_log (
+    id INTEGER PRIMARY KEY,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    item_type TEXT NOT NULL CHECK (item_type IN ('episode', 'ad', 'bumper', 'card', 'film', 'reel', 'off_air')),
+    item_id INTEGER,
+    block_name TEXT,
+    event_name TEXT,
+    status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'played', 'skipped')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_program_log_start ON program_log(start_time);
+CREATE INDEX idx_program_log_item ON program_log(item_type, item_id, start_time);
+INSERT INTO program_log (start_time, end_time, item_type, item_id)
+    VALUES ('2026-07-06T07:00:00+00:00', '2026-07-06T07:20:00+00:00', 'card', 1);
+"""
+
+
+def test_connect_re_widens_a_card_era_program_log_to_allow_sms_chat(tmp_path):
+    path = tmp_path / "cardera.db"
+    raw = sqlite3.connect(path)
+    raw.executescript(_CARD_ERA_PROGRAM_LOG)
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(path)
+    assert conn.execute("SELECT item_type FROM program_log").fetchone()["item_type"] == "card"  # preserved
+
+    conn.execute(
+        "INSERT INTO program_log (start_time, end_time, item_type, item_id) VALUES (?, ?, 'sms_chat', ?)",
+        ("2026-07-06T07:20:00+00:00", "2026-07-06T08:00:00+00:00", None),
+    )
+    conn.commit()
+    assert conn.execute("SELECT COUNT(*) AS c FROM program_log WHERE item_type = 'sms_chat'").fetchone()["c"] == 1
+
+
 def test_migration_is_idempotent_and_survives_reconnect(tmp_path):
     path = tmp_path / "old.db"
     raw = sqlite3.connect(path)

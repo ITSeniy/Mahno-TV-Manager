@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 
 from director import db
+from director.card_content import refresh_sms
 from director.config import Config, Secrets
 from director.ticker_content import refresh_pool
 from director.ticker_server import start_server
@@ -26,7 +27,8 @@ def main() -> None:
     while True:
         now = datetime.now(timezone.utc)
         lines = refresh_pool(conn, secrets.gemini_api_keys, now)
-        print(f"{now.isoformat()}: ticker pool has {len(lines)} lines")
+        sms = refresh_sms(conn, secrets.gemini_api_keys, now)
+        print(f"{now.isoformat()}: ticker pool {len(lines)} lines, sms-chat {len(sms)} lines")
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 

@@ -77,8 +77,10 @@ def test_default_blocks_tile_the_whole_day():
 
 def test_weekday_uses_default_blocks():
     blocks, name = blocks_for_date(date(2026, 7, 6))  # Monday
-    assert name is None
-    assert [b.name for b in blocks] == ["утро", "день", "вечер", "ночь"]
+    assert name is None  # routine dayparts, no event label
+    assert [b.name for b in blocks] == [
+        "утро", "день", "телемагазин", "день", "вечер", "ночь", "музыкальный канал", "ночной чат",
+    ]
 
 
 def test_saturday_composes_marathon_film_and_adult_swim_and_still_tiles():
@@ -86,23 +88,25 @@ def test_saturday_composes_marathon_film_and_adult_swim_and_still_tiles():
     # a prime-time film slot, and the night Adult Swim block.
     blocks, name = blocks_for_date(date(2026, 7, 4))  # Saturday
     assert name == "выходной марафон + вечерний фильм + Adult Swim"
-    assert [b.name for b in blocks] == ["марафон", "вечер", "вечерний фильм", "Adult Swim", "ночь"]
+    assert [b.name for b in blocks] == [
+        "марафон", "вечер", "вечерний фильм", "Adult Swim", "ночь", "музыкальный канал", "ночной чат",
+    ]
     _assert_tiles_day(blocks)
 
 
 def test_two_overlays_on_different_ranges_compose():
     # A daytime overlay and a night overlay (crossing midnight) must coexist -
     # the old first-match-wins scheme could not express this.
-    base = list(DEFAULT_BLOCKS)
+    base = [
+        BlockTemplate("день", time(10, 0), time(23, 0)),
+        BlockTemplate("ночь", time(23, 0), time(5, 0)),
+    ]
     day = Overlay("day-x", time(10, 0), time(13, 0), [BlockTemplate("day-x", time(10, 0), time(13, 0))])
-    night = Overlay(
-        "Adult Swim", time(23, 0), time(2, 0),
-        [BlockTemplate("Adult Swim", time(23, 0), time(2, 0), category_filter=["adult-animation"])],
-    )
+    night = Overlay("Adult Swim", time(23, 0), time(2, 0), [BlockTemplate("Adult Swim", time(23, 0), time(2, 0))])
     composed = _apply_overlay(_apply_overlay(base, day), night)
 
     names = [b.name for b in sorted(composed, key=lambda b: _to_bmin(b.start))]
-    assert names == ["day-x", "день", "вечер", "Adult Swim", "ночь"]
+    assert names == ["day-x", "день", "Adult Swim", "ночь"]
     _assert_tiles_day(composed)
     night_block = next(b for b in composed if b.name == "ночь")
     assert night_block.start == time(2, 0)  # night block pushed to after Adult Swim

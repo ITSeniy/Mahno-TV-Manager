@@ -128,6 +128,13 @@ def test_resolve_media_path_for_a_reel_and_film_marker(tmp_path):
     assert resolve_media_path(conn, film_row) == ("/k/r1.mkv", False)
 
 
+def test_resolve_media_path_for_sms_chat_is_none(tmp_path):
+    conn = make_db(tmp_path)
+    row = conn.execute("SELECT 'sms_chat' AS item_type, NULL AS item_id").fetchone()
+    # no file - apply_item switches to the SMS_CHAT scene instead
+    assert resolve_media_path(conn, row) == (None, False)
+
+
 def test_resolve_media_path_for_a_rendered_card(tmp_path):
     conn = make_db(tmp_path)
     rendered = tmp_path / "card.mp4"

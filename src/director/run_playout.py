@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from director import db
 from director.config import Config
 from director.obs_client import get_client
-from director.obs_playout import MEDIA_SOURCE, ON_AIR_SCENE, apply_item, ensure_scenes
+from director.obs_playout import MEDIA_SOURCE, ON_AIR_SCENE, apply_item, ensure_scenes, ensure_sms_scene
 from director.overlays import ensure_logo, ensure_ticker_source
 from director.playout import advance_status, find_current_row, resolve_media_path
 from director.vhs_effect import ensure_vhs_effect
@@ -32,6 +32,7 @@ def main() -> None:
         print("logo_path не задан или файл не найден - оверлей лого пропущен")
 
     ensure_ticker_source(client, ON_AIR_SCENE, f"http://127.0.0.1:{config.ticker_port}/")
+    ensure_sms_scene(client, f"http://127.0.0.1:{config.ticker_port}/sms")
     ensure_vhs_effect(client, ON_AIR_SCENE)
     ensure_tape_effect(client, MEDIA_SOURCE)
 

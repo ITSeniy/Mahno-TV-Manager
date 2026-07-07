@@ -88,6 +88,136 @@ def refresh_weather(conn: sqlite3.Connection, api_keys: list[str], now_utc: date
     return lines
 
 
+# --- Generic service-text pool (currency, horoscope, sms) ------------------
+# Same idempotent-per-MSK-day pattern as refresh_weather, generalized by kind so
+# new service content reuses one table (service_pools) and one code path.
+
+def refresh_service_pool(
+    conn: sqlite3.Connection,
+    kind: str,
+    prompt: str,
+    fallback: list[str],
+    api_keys: list[str],
+    now_utc: datetime,
+) -> list[str]:
+    today = _msk_date(now_utc)
+    existing = conn.execute(
+        "SELECT payload_json FROM service_pools WHERE kind = ? AND msk_date = ? ORDER BY id DESC LIMIT 1",
+        (kind, today),
+    ).fetchone()
+    if existing is not None:
+        return json.loads(existing["payload_json"])
+
+    try:
+        raw = gemini_client.generate_text(api_keys, prompt)
+        lines = parse_weather(raw)  # generic line stripper - fine for any line-per-item pool
+        if not lines:
+            raise RuntimeError("Gemini returned no usable lines")
+        source = "gemini"
+    except Exception as exc:  # noqa: BLE001 - any failure must fall back, not crash the render/ticker job
+        print(f"{kind}: Gemini generation failed ({exc}), using fallback")
+        lines = fallback
+        source = "fallback"
+
+    conn.execute(
+        "INSERT INTO service_pools (kind, generated_at, msk_date, source, payload_json) VALUES (?, ?, ?, ?, ?)",
+        (kind, now_utc.isoformat(), today, source, json.dumps(lines, ensure_ascii=False)),
+    )
+    conn.commit()
+    return lines
+
+
+def get_service_pool(conn: sqlite3.Connection, kind: str, fallback: list[str]) -> list[str]:
+    row = conn.execute(
+        "SELECT payload_json FROM service_pools WHERE kind = ? ORDER BY id DESC LIMIT 1", (kind,)
+    ).fetchone()
+    return json.loads(row["payload_json"]) if row is not None else fallback
+
+
+CURRENCY_PROMPT = """\
+Ты — редактор блока курсов валют российского телеканала начала 2000-х.
+Выдай курс ЦБ РФ на завтра для 4 валют, каждая на отдельной строке в формате
+ВАЛЮТА|Х РУБ ХХ КОП (через вертикальную черту), ЗАГЛАВНЫМИ, без нумерации и
+markdown. Значения реалистичные для 2002–2005:
+ДОЛЛАР США (~30 руб), ЕВРО (~35 руб), ФУНТ СТЕРЛИНГОВ (~48 руб),
+ШВЕЙЦАРСКИЙ ФРАНК (~23 руб).
+"""
+
+CURRENCY_FALLBACK = [
+    "ДОЛЛАР США|30 РУБ 15 КОП",
+    "ЕВРО|35 РУБ 40 КОП",
+    "ФУНТ СТЕРЛИНГОВ|48 РУБ 90 КОП",
+    "ШВЕЙЦАРСКИЙ ФРАНК|23 РУБ 10 КОП",
+]
+
+HOROSCOPE_PROMPT = """\
+Ты — редактор гороскопа российского развлекательного телеканала начала 2000-х.
+Выдай короткий шуточный гороскоп на завтра для 12 знаков зодиака, каждый на
+отдельной строке в формате ЗНАК|фраза (через вертикальную черту, фраза 15–55
+символов), ЗАГЛАВНЫМИ знак, без нумерации и markdown. Дворовый юмор, ностальгия
+по нулевым. Знаки: ОВЕН, ТЕЛЕЦ, БЛИЗНЕЦЫ, РАК, ЛЕВ, ДЕВА, ВЕСЫ, СКОРПИОН,
+СТРЕЛЕЦ, КОЗЕРОГ, ВОДОЛЕЙ, РЫБЫ.
+"""
+
+HOROSCOPE_FALLBACK = [
+    "ОВЕН|не переключайте канал — будет удача",
+    "ТЕЛЕЦ|день хорош для повтора любимых серий",
+    "БЛИЗНЕЦЫ|пришлите привет в эфир — сбудется",
+    "РАК|берегите видеокассеты от солнца",
+    "ЛЕВ|вас ждёт приятный звонок на пейджер",
+    "ДЕВА|разберите наконец полку с дисками",
+    "ВЕСЫ|equilibrium: смотрите мультики в меру",
+    "СКОРПИОН|не спорьте с младшим братом о пульте",
+    "СТРЕЛЕЦ|удачный день для прогулки во дворе",
+    "КОЗЕРОГ|дела пойдут в гору после обеда",
+    "ВОДОЛЕЙ|звёзды советуют дождаться вечера",
+    "РЫБЫ|сегодня всё сложится само собой",
+]
+
+
+def refresh_currency(conn: sqlite3.Connection, api_keys: list[str], now_utc: datetime) -> list[str]:
+    return refresh_service_pool(conn, "currency", CURRENCY_PROMPT, CURRENCY_FALLBACK, api_keys, now_utc)
+
+
+def get_currency(conn: sqlite3.Connection) -> list[str]:
+    return get_service_pool(conn, "currency", CURRENCY_FALLBACK)
+
+
+def refresh_horoscope(conn: sqlite3.Connection, api_keys: list[str], now_utc: datetime) -> list[str]:
+    return refresh_service_pool(conn, "horoscope", HOROSCOPE_PROMPT, HOROSCOPE_FALLBACK, api_keys, now_utc)
+
+
+def get_horoscope(conn: sqlite3.Connection) -> list[str]:
+    return get_service_pool(conn, "horoscope", HOROSCOPE_FALLBACK)
+
+
+SMS_PROMPT = """\
+Ты — редактор ночного SMS-чата российского развлекательного телеканала начала
+2000-х. Выдай 25 коротких сообщений от зрителей, каждое на отдельной строке в
+формате ИМЯ, ГОРОД: текст (текст 10–55 символов), без нумерации и markdown.
+Приветы в эфир, дворовый юмор, ностальгия по нулевым (пейджеры, кассеты, дискотека).
+"""
+
+SMS_FALLBACK = [
+    "ВАСЯ, ТАМБОВ: ПРИВЕТ ВСЕМ КТО НЕ СПИТ!!!",
+    "ЛЕНА, ОМСК: КТО СМОТРИТ КАНАЛ В ТАКОЙ ЧАС?)))",
+    "ДИМОН, КАЗАНЬ: РУЛИТ ЭТОТ КАНАЛ, ПАЦАНЫ",
+    "НАСТЯ, 15 ЛЕТ: ПЕРЕДАЙТЕ ПРИВЕТ 9 «Б»",
+    "АНОНИМ: СКИНЬТЕ НОМЕР ПЕЙДЖЕРА))",
+    "МАКС, ПЕРМЬ: СПОКОЙНОЙ НОЧИ ВСЕМ ЗРИТЕЛЯМ",
+    "ОКСАНА: ОБОЖАЮ ЭТОТ ЧАТ, СИЖУ ДО УТРА",
+    "СЕРЫЙ, РОСТОВ: КТО С ДВОРА — ОТЗОВИТЕСЬ",
+]
+
+
+def refresh_sms(conn: sqlite3.Connection, api_keys: list[str], now_utc: datetime) -> list[str]:
+    return refresh_service_pool(conn, "sms", SMS_PROMPT, SMS_FALLBACK, api_keys, now_utc)
+
+
+def get_sms(conn: sqlite3.Connection) -> list[str]:
+    return get_service_pool(conn, "sms", SMS_FALLBACK)
+
+
 def _fmt_time(iso: str) -> str:
     return utc_to_msk(datetime.fromisoformat(iso)).strftime("%H:%M")
 

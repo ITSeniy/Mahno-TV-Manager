@@ -76,6 +76,24 @@ def weather_html(lines: list[tuple[str, str]]) -> str:
     return _page(body)
 
 
+def currency_html(rows: list[tuple[str, str]]) -> str:
+    body = (
+        "<div class='header'>КУРС ВАЛЮТ<span class='sub'>ЦБ РФ</span></div>"
+        f"<div class='rows'>{_rows(rows)}</div>"
+        "<div class='footer'>ПО ДАННЫМ НА ЗАВТРА</div>"
+    )
+    return _page(body)
+
+
+def horoscope_html(items: list[tuple[str, str]]) -> str:
+    body = (
+        "<div class='header'>ГОРОСКОП<span class='sub'>НА ЗАВТРА</span></div>"
+        f"<div class='rows'>{_rows(items)}</div>"
+        "<div class='footer'>ЗВЁЗДЫ СОВЕТУЮТ ОСТАВАТЬСЯ С НАМИ</div>"
+    )
+    return _page(body)
+
+
 def clock_html(time_label: str) -> str:
     extra = """
       .clock { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }

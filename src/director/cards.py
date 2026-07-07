@@ -18,8 +18,10 @@ KIND_EPG_DAY = "epg_day"    # detailed program guide for the whole broadcast day
 KIND_EPG_NEXT = "epg_next"  # brief "Далее" - the next few programs
 KIND_WEATHER = "weather"    # forecast plate
 KIND_CLOCK = "clock"        # time/ident plate; also the universal filler for tiny gaps
+KIND_CURRENCY = "currency"  # ЦБ exchange-rate plate
+KIND_HOROSCOPE = "horoscope"  # daily horoscope plate
 
-ALL_KINDS = (KIND_EPG_DAY, KIND_EPG_NEXT, KIND_WEATHER, KIND_CLOCK)
+ALL_KINDS = (KIND_EPG_DAY, KIND_EPG_NEXT, KIND_WEATHER, KIND_CLOCK, KIND_CURRENCY, KIND_HOROSCOPE)
 
 
 def reserve_card(

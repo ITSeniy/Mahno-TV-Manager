@@ -48,11 +48,19 @@ def block_allows_series(block: BlockTemplate, name: str, category: str) -> bool:
     return True
 
 
+# Routine dayparts, incl. the daytime teleshopping graveyard (15:00-16:00) and
+# the deep-night music-clip block (03:00-04:00). Both are category-restricted;
+# with no such content they degrade to continuity filler. They stay in the base
+# schedule (not overlays) so weekdays keep event_name = None.
 DEFAULT_BLOCKS: list[BlockTemplate] = [
     BlockTemplate("утро", time(10, 0), time(13, 0), category_exclude=_NO_ADULT),
-    BlockTemplate("день", time(13, 0), time(18, 0), category_exclude=_NO_ADULT),
+    BlockTemplate("день", time(13, 0), time(15, 0), category_exclude=_NO_ADULT),
+    BlockTemplate("телемагазин", time(15, 0), time(16, 0), category_filter=["teleshopping"]),
+    BlockTemplate("день", time(16, 0), time(18, 0), category_exclude=_NO_ADULT),
     BlockTemplate("вечер", time(18, 0), time(23, 0), ad_break_every_minutes=20, category_exclude=_NO_ADULT),
-    BlockTemplate("ночь", time(23, 0), time(5, 0), ad_break_every_minutes=40, max_consecutive_same_series=2, category_exclude=_NO_ADULT),
+    BlockTemplate("ночь", time(23, 0), time(3, 0), ad_break_every_minutes=40, max_consecutive_same_series=2, category_exclude=_NO_ADULT),
+    BlockTemplate("музыкальный канал", time(3, 0), time(4, 0), category_filter=["music"]),
+    BlockTemplate("ночной чат", time(4, 0), time(5, 0), content="sms_chat"),
 ]
 
 
