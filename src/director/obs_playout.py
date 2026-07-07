@@ -20,6 +20,7 @@ SMS_CHAT_SCENE = "SMS_CHAT"
 MEDIA_SOURCE = "program_player"
 OFF_AIR_BG_SOURCE = "off_air_background"
 OFF_AIR_TEXT_SOURCE = "off_air_label"
+OFF_AIR_TEST_CARD_SOURCE = "off_air_test_card"
 SMS_CHAT_SOURCE = "sms_chat_browser"
 
 RESTART_ACTION = "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"
@@ -127,6 +128,34 @@ def ensure_sms_scene(client: obsws.ReqClient, url: str) -> None:
             SMS_CHAT_SCENE, SMS_CHAT_SOURCE, browser_kind,
             {"url": url, "width": video.base_width, "height": video.base_height}, True,
         )
+
+
+def ensure_test_card(client: obsws.ReqClient, image_path: str) -> None:
+    """Optional real test card (УЭИТ/SMPTE image) covering the OFF_AIR scene
+    during profilaktika, in place of the plain color+text placeholder. Created
+    once on top of the color+text and stretched to the canvas; if no image is
+    configured (run_playout skips this) the color+text stays."""
+    if OFF_AIR_SCENE not in _scene_names(client):
+        return  # ensure_scenes hasn't run yet
+    if OFF_AIR_TEST_CARD_SOURCE in _input_names(client):
+        return
+    image_kind = _resolve_kind(client, "image_source")
+    client.create_input(OFF_AIR_SCENE, OFF_AIR_TEST_CARD_SOURCE, image_kind, {"file": image_path}, True)
+    video = client.get_video_settings()
+    item_id = _scene_item_id(client, OFF_AIR_SCENE, OFF_AIR_TEST_CARD_SOURCE)
+    client.set_scene_item_transform(
+        OFF_AIR_SCENE,
+        item_id,
+        {
+            "boundsType": "OBS_BOUNDS_STRETCH",
+            "boundsAlignment": _ALIGN_TOP_LEFT,
+            "boundsWidth": video.base_width,
+            "boundsHeight": video.base_height,
+            "alignment": _ALIGN_TOP_LEFT,
+            "positionX": 0,
+            "positionY": 0,
+        },
+    )
 
 
 def apply_item(client: obsws.ReqClient, item_type: str, file_path: str | None, is_ntsc_rendered: bool) -> None:

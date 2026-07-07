@@ -4,14 +4,19 @@
   "bumpers_root": "D:/TVLibrary/Bumpers",
   "db_path": "data/library.db",
   "logo_path": "D:/TVLibrary/Branding/logo.png",
+  "test_card_path": "D:/TVLibrary/Branding/ueit_test_card.png",
   "ticker_port": 8765,
   "dashboard_port": 8766,
   "active_series": ["Show One", "Show Two"],
   "random_rotation_series": ["Show Two"],
   "series_categories": {
     "adult-animation": ["Show Two"],
+    "adult-drama": [],
+    "sitcom": [],
     "edutainment": [],
-    "auto": []
+    "auto": [],
+    "teleshopping": [],
+    "music": []
   },
   "ntsc_rs_cli_path": "ntsc-rs-windows-standalone/bin/ntsc-rs-cli.exe",
   "ntsc_rs_settings_path": "ntsc-rs-windows-standalone/settings.json",

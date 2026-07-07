@@ -7,6 +7,7 @@ a browser + two encodes, far too slow for the 3s poll). Playwright is imported
 lazily so the rest of the director doesn't depend on a browser being installed.
 """
 
+import random
 import re
 import subprocess
 import sqlite3
@@ -71,6 +72,13 @@ def card_html_pages(conn: sqlite3.Connection, card: sqlite3.Row, weather_lines: 
         items = [_split_pipe(line) for line in card_content.get_horoscope(conn)]
         pages = [items[i : i + 6] for i in range(0, len(items), 6)] or [[]]
         return [card_templates.horoscope_html(p) for p in pages]
+    if kind == cards.KIND_PROMO:
+        promo = card_content.upcoming_promo(conn, card["slot_start"])
+        teaser = random.choice(card_content.PROMO_TEASERS)
+        if promo is None:
+            return [card_templates.promo_html("НЕ ПЕРЕКЛЮЧАЙТЕ", "", teaser)]
+        when, title = promo
+        return [card_templates.promo_html(title, when, teaser)]
     if kind == cards.KIND_CLOCK:
         return [card_templates.clock_html(utc_to_msk(datetime.fromisoformat(card["slot_start"])).strftime("%H:%M"))]
     return [card_templates.clock_html("")]  # unknown kind -> a neutral plate rather than a crash

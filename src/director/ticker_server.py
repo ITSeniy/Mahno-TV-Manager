@@ -10,11 +10,12 @@ local JSON without hitting CORS restrictions.
 import json
 import sqlite3
 import threading
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from director.card_content import get_sms
-from director.ticker_content import get_current_pool
+from director.ticker_content import current_ticker_lines
 
 PAGE = """<!DOCTYPE html>
 <html lang="ru">
@@ -176,7 +177,7 @@ def _make_handler(db_path: Path):
             elif self.path == "/sms":
                 self._send(200, "text/html; charset=utf-8", SMS_PAGE.encode("utf-8"))
             elif self.path == "/ticker.json":
-                self._send_feed(get_current_pool)
+                self._send_feed(lambda c: current_ticker_lines(c, datetime.now(timezone.utc)))
             elif self.path == "/sms.json":
                 self._send_feed(get_sms)
             else:

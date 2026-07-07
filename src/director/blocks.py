@@ -18,10 +18,17 @@ from datetime import date, time
 OFF_AIR_START = time(5, 0)
 OFF_AIR_END = time(10, 0)
 
-# Adult animation (Futurama et al.) is barred from the regular schedule and airs
-# only in the curated Adult Swim night block on Fri/Sat/Sun (see OVERLAYS).
 ADULT_ANIMATION = "adult-animation"
-_NO_ADULT = [ADULT_ANIMATION]
+ADULT_DRAMA = "adult-drama"
+SITCOM = "sitcom"
+TELESHOPPING = "teleshopping"
+MUSIC = "music"
+# Categories that have their own dedicated exclusive block are barred from the
+# general schedule, so each airs only in its slot: adult content at night
+# (Adult Swim / ночной сериал), sitcoms in the evening series slot, teleshopping
+# and music-clips in their graveyard blocks. Uncategorized 'cartoon' plus
+# edutainment/auto (no dedicated slot) are the general daytime programming.
+_SLOTTED = [ADULT_ANIMATION, ADULT_DRAMA, SITCOM, TELESHOPPING, MUSIC]
 
 
 @dataclass(frozen=True)
@@ -53,12 +60,14 @@ def block_allows_series(block: BlockTemplate, name: str, category: str) -> bool:
 # with no such content they degrade to continuity filler. They stay in the base
 # schedule (not overlays) so weekdays keep event_name = None.
 DEFAULT_BLOCKS: list[BlockTemplate] = [
-    BlockTemplate("утро", time(10, 0), time(13, 0), category_exclude=_NO_ADULT),
-    BlockTemplate("день", time(13, 0), time(15, 0), category_exclude=_NO_ADULT),
+    BlockTemplate("утро", time(10, 0), time(13, 0), category_exclude=_SLOTTED),
+    BlockTemplate("день", time(13, 0), time(15, 0), category_exclude=_SLOTTED),
     BlockTemplate("телемагазин", time(15, 0), time(16, 0), category_filter=["teleshopping"]),
-    BlockTemplate("день", time(16, 0), time(18, 0), category_exclude=_NO_ADULT),
-    BlockTemplate("вечер", time(18, 0), time(23, 0), ad_break_every_minutes=20, category_exclude=_NO_ADULT),
-    BlockTemplate("ночь", time(23, 0), time(3, 0), ad_break_every_minutes=40, max_consecutive_same_series=2, category_exclude=_NO_ADULT),
+    BlockTemplate("день", time(16, 0), time(18, 0), category_exclude=_SLOTTED),
+    BlockTemplate("вечер", time(18, 0), time(20, 0), ad_break_every_minutes=20, category_exclude=_SLOTTED),
+    BlockTemplate("вечерний сериал", time(20, 0), time(21, 0), ad_break_every_minutes=20, category_filter=["sitcom"]),
+    BlockTemplate("вечер", time(21, 0), time(23, 0), ad_break_every_minutes=20, category_exclude=_SLOTTED),
+    BlockTemplate("ночь", time(23, 0), time(3, 0), ad_break_every_minutes=40, max_consecutive_same_series=2, category_exclude=_SLOTTED),
     BlockTemplate("музыкальный канал", time(3, 0), time(4, 0), category_filter=["music"]),
     BlockTemplate("ночной чат", time(4, 0), time(5, 0), content="sms_chat"),
 ]
@@ -98,6 +107,7 @@ class Overlay:
     blocks: list[BlockTemplate]
     day_of_week: set[int] | None = None  # date.weekday(): 0=Mon..6=Sun; None = every day
     applies: callable = None  # optional date -> bool, checked in addition to day_of_week
+    is_event: bool = True  # False = a routine themed daypart that shouldn't label the day's event_name
 
 
 # Overlay blocks must tile their own [start, end) window. Add holidays,
@@ -108,7 +118,7 @@ OVERLAYS: list[Overlay] = [
         start=time(10, 0),
         end=time(18, 0),
         day_of_week={5, 6},  # Saturday, Sunday
-        blocks=[BlockTemplate("марафон", time(10, 0), time(18, 0), ad_break_every_minutes=30, category_exclude=_NO_ADULT)],
+        blocks=[BlockTemplate("марафон", time(10, 0), time(18, 0), ad_break_every_minutes=30, category_exclude=_SLOTTED)],
     ),
     Overlay(
         name="вечерний фильм",
@@ -118,7 +128,7 @@ OVERLAYS: list[Overlay] = [
         blocks=[
             BlockTemplate(
                 "вечерний фильм", time(21, 0), time(23, 0),
-                ad_break_every_minutes=30, category_exclude=_NO_ADULT, content="film",
+                ad_break_every_minutes=30, category_exclude=_SLOTTED, content="film",
             )
         ],
     ),
@@ -132,6 +142,20 @@ OVERLAYS: list[Overlay] = [
                 "Adult Swim", time(23, 0), time(2, 0),
                 ad_break_every_minutes=30, max_consecutive_same_series=3,
                 category_filter=[ADULT_ANIMATION],
+            )
+        ],
+    ),
+    Overlay(
+        name="ночной сериал",
+        start=time(0, 0),
+        end=time(2, 0),
+        day_of_week={0, 1, 2, 3},  # Mon-Thu late night (weekends get Adult Swim instead)
+        is_event=False,  # a routine themed daypart, not a special event
+        blocks=[
+            BlockTemplate(
+                "ночной сериал", time(0, 0), time(2, 0),
+                ad_break_every_minutes=30, max_consecutive_same_series=2,
+                category_filter=[ADULT_DRAMA],
             )
         ],
     ),
@@ -167,5 +191,6 @@ def blocks_for_date(broadcast_date: date) -> tuple[list[BlockTemplate], str | No
         extra_ok = overlay.applies is None or overlay.applies(broadcast_date)
         if day_ok and extra_ok:
             blocks = _apply_overlay(blocks, overlay)
-            applied.append(overlay.name)
+            if overlay.is_event:
+                applied.append(overlay.name)
     return blocks, (" + ".join(applied) or None)

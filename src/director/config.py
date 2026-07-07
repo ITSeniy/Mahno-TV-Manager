@@ -32,6 +32,7 @@ class Config:
     active_films: list[str] | None  # allowlist of film folders, like active_series
     film_categories: dict[str, list[str]]  # category -> [film titles]; unlisted default to 'film'
     film_repeat_days: int  # don't re-air a film within this many days
+    test_card_path: Path | None  # optional УЭИТ/SMPTE image shown during profilaktika (else color+text)
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":
@@ -49,6 +50,7 @@ class Config:
         card_music_path = raw.get("card_music_path")
         films_root = raw.get("films_root")
         active_films = raw.get("active_films")
+        test_card_path = raw.get("test_card_path")
         return cls(
             series_root=Path(raw["series_root"]),
             ads_root=Path(raw["ads_root"]),
@@ -68,6 +70,7 @@ class Config:
             active_films=list(active_films) if active_films is not None else None,
             film_categories={k: list(v) for k, v in raw.get("film_categories", {}).items()},
             film_repeat_days=int(raw.get("film_repeat_days", 14)),
+            test_card_path=Path(test_card_path) if test_card_path else None,
         )
 
 

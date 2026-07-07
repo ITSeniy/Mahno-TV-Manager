@@ -79,7 +79,8 @@ def test_weekday_uses_default_blocks():
     blocks, name = blocks_for_date(date(2026, 7, 6))  # Monday
     assert name is None  # routine dayparts, no event label
     assert [b.name for b in blocks] == [
-        "утро", "день", "телемагазин", "день", "вечер", "ночь", "музыкальный канал", "ночной чат",
+        "утро", "день", "телемагазин", "день", "вечер", "вечерний сериал", "вечер",
+        "ночь", "ночной сериал", "ночь", "музыкальный канал", "ночной чат",
     ]
 
 
@@ -89,7 +90,8 @@ def test_saturday_composes_marathon_film_and_adult_swim_and_still_tiles():
     blocks, name = blocks_for_date(date(2026, 7, 4))  # Saturday
     assert name == "выходной марафон + вечерний фильм + Adult Swim"
     assert [b.name for b in blocks] == [
-        "марафон", "вечер", "вечерний фильм", "Adult Swim", "ночь", "музыкальный канал", "ночной чат",
+        "марафон", "вечер", "вечерний сериал", "вечерний фильм", "Adult Swim",
+        "ночь", "музыкальный канал", "ночной чат",
     ]
     _assert_tiles_day(blocks)
 
@@ -110,6 +112,41 @@ def test_two_overlays_on_different_ranges_compose():
     _assert_tiles_day(composed)
     night_block = next(b for b in composed if b.name == "ночь")
     assert night_block.start == time(2, 0)  # night block pushed to after Adult Swim
+
+
+def test_weeknight_night_series_overlay_applies_without_an_event_label():
+    blocks, name = blocks_for_date(date(2026, 7, 6))  # Monday
+    assert name is None  # ночной сериал is a routine daypart (is_event=False), not an event
+    night_series = next(b for b in blocks if b.name == "ночной сериал")
+    assert night_series.category_filter == ["adult-drama"]
+    _assert_tiles_day(blocks)
+
+
+def test_weekend_gets_adult_swim_not_the_night_series():
+    blocks, _ = blocks_for_date(date(2026, 7, 4))  # Saturday
+    assert not any(b.name == "ночной сериал" for b in blocks)
+    assert any(b.name == "Adult Swim" for b in blocks)
+
+
+def test_both_adult_categories_are_barred_from_daytime():
+    blocks, _ = blocks_for_date(date(2026, 7, 6))  # Monday
+    day = next(b for b in blocks if b.name == "день")
+    assert block_allows_series(day, "Смешарики", "cartoon")
+    assert not block_allows_series(day, "Sopranos", "adult-drama")
+    assert not block_allows_series(day, "Futurama", "adult-animation")
+
+
+def test_slotted_categories_are_confined_to_their_own_blocks():
+    blocks, _ = blocks_for_date(date(2026, 7, 6))  # Monday
+    day = next(b for b in blocks if b.name == "день")
+    evening_series = next(b for b in blocks if b.name == "вечерний сериал")
+    # sitcom/teleshopping/music each have a dedicated slot -> barred from the general schedule
+    assert not block_allows_series(day, "Friends", "sitcom")
+    assert not block_allows_series(day, "Магазин", "teleshopping")
+    assert block_allows_series(evening_series, "Friends", "sitcom")
+    # cartoon/edutainment/auto have no dedicated slot -> stay general daytime programming
+    assert block_allows_series(day, "Смешарики", "cartoon")
+    assert block_allows_series(day, "Галилео", "edutainment")
 
 
 def test_overlay_can_split_a_block_it_sits_inside():

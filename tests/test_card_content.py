@@ -136,6 +136,22 @@ def test_epg_day_pages_paginate(tmp_path):
     assert len(pages[0]) == 8 and len(pages[1]) == 2
 
 
+def test_upcoming_promo_reaches_a_few_slots_ahead(tmp_path):
+    conn = make_db(tmp_path)
+    for i in range(4):
+        e = _add_prog(conn, f"Show{i}", title=f"Ep{i}")
+        _log(conn, T0 + timedelta(minutes=30 * i), 20, "episode", e)
+
+    promo = card_content.upcoming_promo(conn, (T0 - timedelta(minutes=1)).isoformat(), ahead=3)
+    assert promo is not None
+    _when, title = promo
+    assert "Show2" in title  # the 3rd programme ahead, not the immediate next
+
+
+def test_upcoming_promo_is_none_when_nothing_is_upcoming(tmp_path):
+    assert card_content.upcoming_promo(make_db(tmp_path), T0.isoformat()) is None
+
+
 def test_epg_next_items_returns_upcoming_programmes(tmp_path):
     conn = make_db(tmp_path)
     e1 = _add_prog(conn, "A")

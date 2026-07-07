@@ -40,7 +40,7 @@ SIGN_ON_LABEL = "начало эфира"  # block_name for the morning sign-on 
 # Medium anchor gaps rotate through these continuity cards - "Далее" most often,
 # with weather/currency/horoscope interspersed for variety.
 _MEDIUM_CARD_ROTATION = (
-    cards.KIND_EPG_NEXT, cards.KIND_WEATHER, cards.KIND_EPG_NEXT,
+    cards.KIND_EPG_NEXT, cards.KIND_WEATHER, cards.KIND_PROMO,
     cards.KIND_CURRENCY, cards.KIND_EPG_NEXT, cards.KIND_HOROSCOPE,
 )
 

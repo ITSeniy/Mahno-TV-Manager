@@ -94,6 +94,23 @@ def horoscope_html(items: list[tuple[str, str]]) -> str:
     return _page(body)
 
 
+def promo_html(title: str, when: str, teaser: str) -> str:
+    extra = """
+      .promo { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+        text-align: center; gap: 16px; padding: 0 6%; }
+      .promo .when { font-size: 30px; font-weight: bold; color: #7fe0ff; letter-spacing: 2px; }
+      .promo .title { font-size: 44px; font-weight: bold; color: #ffffff; text-shadow: 2px 2px 0 #00000066;
+        line-height: 1.1; }
+      .promo .teaser { font-size: 26px; font-weight: bold; color: #ffe14d; letter-spacing: 3px; }
+    """
+    body = (
+        "<div class='header'>СКОРО НА КАНАЛЕ</div>"
+        f"<div class='promo'><div class='when'>{_esc(when)}</div>"
+        f"<div class='title'>{_esc(title)}</div><div class='teaser'>{_esc(teaser)}</div></div>"
+    )
+    return _page(body, extra)
+
+
 def clock_html(time_label: str) -> str:
     extra = """
       .clock { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }

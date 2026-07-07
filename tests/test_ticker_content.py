@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from director import db, ticker_content
@@ -8,6 +9,30 @@ T0 = datetime(2026, 7, 6, 10, 0, tzinfo=timezone.utc)  # 13:00 MSK
 
 def make_db(tmp_path: Path):
     return db.connect(tmp_path / "lib.db")
+
+
+def _put_pool(conn, lines):
+    conn.execute(
+        "INSERT INTO ticker_pools (generated_at, msk_date, source, lines_json) VALUES ('', '2026-07-06', 'gemini', ?)",
+        (json.dumps(lines, ensure_ascii=False),),
+    )
+    conn.commit()
+
+
+def _air_episode(conn, series_name, start, minutes=10):
+    conn.execute("INSERT INTO series (name, root_path) VALUES (?, ?)", (series_name, f"/{series_name}"))
+    sid = conn.execute("SELECT id FROM series WHERE name = ?", (series_name,)).fetchone()["id"]
+    conn.execute(
+        "INSERT INTO episodes (series_id, season, episode, title, file_path, duration_seconds, scanned_at) "
+        "VALUES (?, 1, 1, 't', ?, 600, datetime('now'))",
+        (sid, f"/{series_name}/e"),
+    )
+    eid = conn.execute("SELECT id FROM episodes WHERE series_id = ?", (sid,)).fetchone()["id"]
+    conn.execute(
+        "INSERT INTO program_log (start_time, end_time, item_type, item_id, status) VALUES (?, ?, 'episode', ?, 'scheduled')",
+        (start.isoformat(), (start + timedelta(minutes=minutes)).isoformat(), eid),
+    )
+    conn.commit()
 
 
 def test_parse_lines_strips_numbering_bullets_and_wrapping_quotes():
@@ -70,6 +95,31 @@ def test_refresh_pool_falls_back_when_gemini_returns_unusable_text(tmp_path, mon
 
     lines = ticker_content.refresh_pool(conn, ["key1"], T0)
     assert lines == ticker_content.STATIC_FALLBACK
+
+
+def test_current_programme_name_returns_the_show_on_air(tmp_path):
+    conn = make_db(tmp_path)
+    _air_episode(conn, "Avatar", T0)
+    assert ticker_content.current_programme_name(conn, T0 + timedelta(minutes=1)) == "Avatar"
+    assert ticker_content.current_programme_name(conn, T0 + timedelta(hours=2)) is None
+
+
+def test_current_ticker_lines_filters_to_the_show_on_air(tmp_path):
+    conn = make_db(tmp_path)
+    _put_pool(conn, ["Avatar::СМОТРИТЕ АВАТАРА", "::СПАСИБО ЧТО С НАМИ", "Zim::ЗИМ БУДЕТ ПОЗЖЕ"])
+    _air_episode(conn, "Avatar", T0)
+
+    lines = ticker_content.current_ticker_lines(conn, T0 + timedelta(minutes=1))
+    assert "СМОТРИТЕ АВАТАРА" in lines  # tagged for the current show, prefix stripped
+    assert "СПАСИБО ЧТО С НАМИ" in lines  # generic ::text
+    assert "ЗИМ БУДЕТ ПОЗЖЕ" not in lines  # tagged for a different show
+
+
+def test_current_ticker_lines_shows_only_generics_when_nothing_is_on_air(tmp_path):
+    conn = make_db(tmp_path)
+    _put_pool(conn, ["Avatar::АВАТАР СЕЙЧАС", "::ОБЩАЯ ФРАЗА"])
+    lines = ticker_content.current_ticker_lines(conn, T0)  # no program_log
+    assert lines == ["ОБЩАЯ ФРАЗА"]
 
 
 def test_refresh_pool_regenerates_on_a_new_msk_day(tmp_path, monkeypatch):

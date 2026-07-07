@@ -244,3 +244,23 @@ def epg_day_pages(conn: sqlite3.Connection, broadcast_date: date, per_page: int 
 def epg_next_items(conn: sqlite3.Connection, slot_start_iso: str, count: int = 3) -> list[tuple[str, str]]:
     """(MSK start time, label) for the next few programmes - the "Далее" card."""
     return [(_fmt_time(r["start_time"]), describe_item(conn, r)) for r in program_items_after(conn, slot_start_iso, count)]
+
+
+PROMO_TEASERS = [
+    "НЕ ПРОПУСТИ!",
+    "ТОЛЬКО У НАС!",
+    "ОСТАВАЙСЯ НА КАНАЛЕ!",
+    "ЖДЁМ ТЕБЯ У ЭКРАНОВ!",
+    "СМОТРИ ОБЯЗАТЕЛЬНО!",
+]
+
+
+def upcoming_promo(conn: sqlite3.Connection, after_iso: str, ahead: int = 3) -> tuple[str, str] | None:
+    """A programme a few slots ahead to hype on a "скоро на канале" card -
+    (MSK time, label). Reaches past the immediate next so the promo teases
+    something not already on the "Далее" card. None if nothing's upcoming."""
+    rows = program_items_after(conn, after_iso, ahead)
+    if not rows:
+        return None
+    row = rows[-1]
+    return _fmt_time(row["start_time"]), describe_item(conn, row)

@@ -11,11 +11,16 @@ from director.obs_playout import (
     MEDIA_SOURCE,
     OFF_AIR_BG_SOURCE,
     OFF_AIR_SCENE,
+    OFF_AIR_TEST_CARD_SOURCE,
     OFF_AIR_TEXT_SOURCE,
     ON_AIR_SCENE,
     RESTART_ACTION,
+    SMS_CHAT_SCENE,
+    SMS_CHAT_SOURCE,
     apply_item,
     ensure_scenes,
+    ensure_sms_scene,
+    ensure_test_card,
 )
 from director.vhs_effect import NTSC_FILTER_NAME, VHS_FILTER_NAME
 
@@ -54,7 +59,7 @@ class FakeObsClient:
 
     def get_input_kind_list(self, unversioned):
         return SimpleNamespace(
-            input_kinds=["ffmpeg_source", "color_source_v3", "text_gdiplus_v3", "image_source"]
+            input_kinds=["ffmpeg_source", "color_source_v3", "text_gdiplus_v3", "image_source", "browser_source"]
         )
 
     def get_video_settings(self):
@@ -213,3 +218,36 @@ def test_apply_item_for_off_air_does_not_touch_ntsc_vhs_filters():
     apply_item(client, "off_air", None, True)
 
     assert client.filter_enabled == {}
+
+
+def test_ensure_test_card_adds_a_stretched_image_over_off_air():
+    client = FakeObsClient(existing_scenes=[OFF_AIR_SCENE], base_width=720, base_height=480)
+    ensure_test_card(client, "C:/branding/ueit.png")
+
+    assert OFF_AIR_TEST_CARD_SOURCE in client.inputs
+    transform = client.transforms[client.item_ids[OFF_AIR_TEST_CARD_SOURCE]]
+    assert transform["boundsType"] == "OBS_BOUNDS_STRETCH"
+    assert transform["boundsWidth"] == 720 and transform["boundsHeight"] == 480
+
+
+def test_ensure_test_card_is_idempotent():
+    client = FakeObsClient(existing_scenes=[OFF_AIR_SCENE], existing_inputs=[OFF_AIR_TEST_CARD_SOURCE])
+    ensure_test_card(client, "x.png")
+    assert not any(c[0] == "create_input" for c in client.calls)
+
+
+def test_ensure_sms_scene_creates_scene_and_browser_source():
+    client = FakeObsClient()
+    ensure_sms_scene(client, "http://127.0.0.1:8765/sms")
+
+    assert SMS_CHAT_SCENE in client.scenes
+    assert SMS_CHAT_SOURCE in client.inputs
+
+
+def test_apply_item_sms_chat_switches_to_the_sms_scene():
+    client = FakeObsClient()
+    apply_item(client, "sms_chat", None, True)
+
+    assert client.current_scene == SMS_CHAT_SCENE
+    assert MEDIA_SOURCE not in client.input_settings
+    assert not any(c[0] == "trigger_media_input_action" for c in client.calls)

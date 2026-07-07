@@ -92,6 +92,17 @@ def test_horoscope_card_html_paginates_twelve_signs(tmp_path):
     assert "ГОРОСКОП" in htmls[0]
 
 
+def test_promo_card_html_hypes_an_upcoming_programme(tmp_path):
+    conn = make_db(tmp_path)
+    for i in range(4):
+        e = _add_prog(conn, f"Show{i}")
+        _log(conn, T0 + timedelta(minutes=30 * i), 20, "episode", e)
+
+    card = _reserve(conn, cards.KIND_PROMO, slot_start=T0 - timedelta(minutes=1))
+    (html,) = card_html_pages(conn, card, weather_lines=[])
+    assert "СКОРО НА КАНАЛЕ" in html and "Show2" in html
+
+
 def test_clock_card_html_shows_the_slot_time(tmp_path):
     conn = make_db(tmp_path)
     card = _reserve(conn, cards.KIND_CLOCK, target=8)
