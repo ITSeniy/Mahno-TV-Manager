@@ -28,10 +28,12 @@ _BASE_CSS = f"""
     display: flex; justify-content: space-between; align-items: baseline;
   }}
   .header .sub {{ font-size: 20px; color: #cfd6ff; letter-spacing: 1px; }}
-  .rows {{ flex: 1; display: flex; flex-direction: column; justify-content: flex-start; gap: 2px; }}
-  .row {{ display: flex; align-items: baseline; font-size: 30px; line-height: 1.28; }}
-  .row .t {{ color: #7fe0ff; font-weight: bold; width: 132px; flex: none; }}
-  .row .v {{ color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+  .rows {{ flex: 1; display: flex; flex-direction: column; justify-content: flex-start; gap: 4px; }}
+  .row {{ display: flex; align-items: baseline; gap: 14px; font-size: 26px; line-height: 1.3; }}
+  /* label sizes to its own content (so long city/currency names don't collide
+     with the value); EPG times are all the same width so they still line up */
+  .row .t {{ color: #7fe0ff; font-weight: bold; flex: 0 0 auto; white-space: nowrap; }}
+  .row .v {{ color: #ffffff; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
   .footer {{ margin-top: 16px; font-size: 18px; color: #aab4ee; letter-spacing: 1px; }}
 """
 
