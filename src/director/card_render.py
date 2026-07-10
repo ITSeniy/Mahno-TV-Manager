@@ -70,8 +70,8 @@ def card_html_pages(conn: sqlite3.Connection, card: sqlite3.Row, weather_lines: 
         return [card_templates.currency_html(rows)]
     if kind == cards.KIND_HOROSCOPE:
         items = [_split_pipe(line) for line in card_content.get_horoscope(conn)]
-        pages = [items[i : i + 6] for i in range(0, len(items), 6)] or [[]]
-        return [card_templates.horoscope_html(p) for p in pages]
+        # One zodiac sign per page - the card cycles through all 12 like "скоро на канале".
+        return [card_templates.horoscope_html(sign, phrase) for sign, phrase in items] or [card_templates.horoscope_html("", "")]
     if kind == cards.KIND_PROMO:
         promo = card_content.upcoming_promo(conn, card["slot_start"])
         teaser = random.choice(card_content.PROMO_TEASERS)
@@ -98,7 +98,10 @@ def _render_htmls_to_pngs(htmls: list[str], out_dir: Path) -> list[Path]:
             for i, html in enumerate(htmls):
                 page.set_content(html, wait_until="load")
                 png = out_dir / f"page{i}.png"
-                page.screenshot(path=str(png))
+                # Transparent foreground: only the glossy bars/badges/text are
+                # opaque; the rest is alpha so the cloth loop shows through when
+                # composited. (Templates set body{background:transparent}.)
+                page.screenshot(path=str(png), omit_background=True)
                 paths.append(png)
         finally:
             browser.close()
@@ -111,23 +114,47 @@ def _run_ffmpeg(cmd: list[str], what: str, produced: Path) -> None:
         raise RuntimeError(f"ffmpeg failed {what} (exit {result.returncode}): {result.stderr.strip()[-800:]}")
 
 
-def _build_video(pngs: list[Path], target_seconds: float, music_path: Path | None, out_mp4: Path) -> None:
-    """Stills -> a clip of exactly target_seconds, each page shown for an equal
-    share, with a looped music bed (or silence). The music is baked in so the
-    live CHOW tape VST on program_player wow/flutters it like everything else.
+def _build_cloth_base(cloth_path: Path | None, target_seconds: float, out_mp4: Path) -> None:
+    """A continuous target_seconds background: the seamless cloth loop, looped
+    and trimmed - or, when no cloth asset is configured, a flat navy fill so
+    cards still render. Seeking into this one real file per page (below) keeps
+    the folds drifting smoothly across page cuts."""
+    size = f"{card_templates.CARD_WIDTH}x{card_templates.CARD_HEIGHT}"
+    if cloth_path is not None and Path(cloth_path).exists():
+        cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", str(cloth_path),
+               "-t", f"{target_seconds:.3f}", "-r", str(CARD_FPS), "-s", size]
+    else:
+        cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=0x0a1030:s={size}:r={CARD_FPS}:d={target_seconds:.3f}"]
+    cmd += ["-pix_fmt", "yuv420p", "-c:v", "libx264", "-an", str(out_mp4)]
+    _run_ffmpeg(cmd, "building cloth background", out_mp4)
 
-    Each page becomes a real constant-frame-rate clip via `-loop 1`: concat-
-    demuxing the PNGs directly yields a single-frame stream (one coded frame
-    with an 8s presentation duration) that ntsc-rs hangs on indefinitely."""
+
+def _build_video(
+    pngs: list[Path], target_seconds: float, music_path: Path | None, out_mp4: Path, cloth_path: Path | None = None
+) -> None:
+    """Transparent page PNGs composited over the drifting cloth -> a clip of
+    exactly target_seconds, each page shown for an equal share, with a looped
+    music bed (or silence). The music is baked in so the live CHOW tape VST on
+    program_player wow/flutters it like everything else.
+
+    Each page becomes a real constant-frame-rate clip: an input seek `-ss` into
+    the continuous cloth base (so motion carries across page cuts) overlaid with
+    the page's transparent foreground. Building real CFR parts also avoids the
+    single-frame stream that ntsc-rs hangs on indefinitely."""
     per = target_seconds / len(pngs)
+    cloth_base = out_mp4.parent / "cloth_base.mp4"
+    _build_cloth_base(cloth_path, target_seconds, cloth_base)
+
     parts: list[Path] = []
     for i, png in enumerate(pngs):
         part = out_mp4.parent / f"part{i}.mp4"
         _run_ffmpeg(
-            ["ffmpeg", "-y", "-loop", "1", "-i", str(png), "-t", f"{per:.3f}", "-r", str(CARD_FPS),
+            ["ffmpeg", "-y", "-ss", f"{i * per:.3f}", "-t", f"{per:.3f}", "-i", str(cloth_base),
+             "-loop", "1", "-i", str(png),
+             "-filter_complex", "[0:v][1:v]overlay=shortest=1", "-t", f"{per:.3f}", "-r", str(CARD_FPS),
              "-s", f"{card_templates.CARD_WIDTH}x{card_templates.CARD_HEIGHT}", "-pix_fmt", "yuv420p",
              "-c:v", "libx264", str(part)],
-            f"building card page {i}", part,
+            f"compositing card page {i}", part,
         )
         parts.append(part)
 
@@ -170,8 +197,8 @@ def render_card(conn: sqlite3.Connection, card: sqlite3.Row, config: Config, wea
         with tempfile.TemporaryDirectory() as td:
             tdp = Path(td)
             pngs = _render_htmls_to_pngs(htmls, tdp)
-            clip = tdp / "clip.mp4"  # stills + music bed
-            _build_video(pngs, card["target_seconds"], config.card_music_path, clip)
+            clip = tdp / "clip.mp4"  # cloth + transparent pages + music bed
+            _build_video(pngs, card["target_seconds"], config.card_music_path, clip, config.cloth_bg_path)
             grimy = tdp / "ntsc.mp4"  # ntsc-rs output, huge - stays in the temp dir
             render_file(config.ntsc_rs_cli_path, config.ntsc_rs_settings_path, clip, grimy)
             _compress(grimy, out)  # compact final card in the cache

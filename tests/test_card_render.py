@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 
-from director import cards, db
+from director import card_templates, cards, db
 from director.card_render import _split_pipe, _split_weather, card_html_pages, is_card_render_valid
 
 T0 = datetime(2026, 7, 6, 7, 0, tzinfo=timezone.utc)  # 10:00 MSK
@@ -83,13 +83,13 @@ def test_currency_card_html_reads_the_pool(tmp_path):
     assert "КУРС ВАЛЮТ" in html and "ДОЛЛАР США" in html and "30 РУБ 15 КОП" in html
 
 
-def test_horoscope_card_html_paginates_twelve_signs(tmp_path):
+def test_horoscope_card_html_is_one_sign_per_page(tmp_path):
     conn = make_db(tmp_path)
-    _put_service_pool(conn, "horoscope", [f"ЗНАК{i}|фраза {i}" for i in range(12)])
+    _put_service_pool(conn, "horoscope", [f"{s}|фраза {i}" for i, s in enumerate(card_templates.SIGN_GLYPHS)])
     card = _reserve(conn, cards.KIND_HOROSCOPE, target=120)
     htmls = card_html_pages(conn, card, weather_lines=[])
-    assert len(htmls) == 2  # 12 signs, 6 per page
-    assert "ГОРОСКОП" in htmls[0]
+    assert len(htmls) == 12  # one zodiac sign per page, cycling all 12
+    assert "ГОРОСКОП" in htmls[0] and "ОВЕН" in htmls[0] and "♈" in htmls[0]
 
 
 def test_promo_card_html_hypes_an_upcoming_programme(tmp_path):

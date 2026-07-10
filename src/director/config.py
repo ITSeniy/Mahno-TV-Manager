@@ -33,6 +33,7 @@ class Config:
     film_categories: dict[str, list[str]]  # category -> [film titles]; unlisted default to 'film'
     film_repeat_days: int  # don't re-air a film within this many days
     test_card_path: Path | None  # optional УЭИТ/SMPTE image shown during profilaktika (else color+text)
+    cloth_bg_path: Path | None  # seamless "silk cloth" loop composited under continuity cards (render_cloth_bg.py)
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":
@@ -51,6 +52,7 @@ class Config:
         films_root = raw.get("films_root")
         active_films = raw.get("active_films")
         test_card_path = raw.get("test_card_path")
+        cloth_bg_path = raw.get("cloth_bg_path")
         return cls(
             series_root=Path(raw["series_root"]),
             ads_root=Path(raw["ads_root"]),
@@ -71,6 +73,7 @@ class Config:
             film_categories={k: list(v) for k, v in raw.get("film_categories", {}).items()},
             film_repeat_days=int(raw.get("film_repeat_days", 14)),
             test_card_path=Path(test_card_path) if test_card_path else None,
+            cloth_bg_path=Path(cloth_bg_path) if cloth_bg_path else None,
         )
 
 
