@@ -1,14 +1,6 @@
 # mahno-tv-manager
 
-> Portfolio project by Arseniy Makhonin.
-
 An autonomous virtual TV channel director that schedules media, controls OBS, renders overlays, and maintains playout history.
-
-## Highlights
-
-- Maintained as a reproducible, source-first portfolio project.
-- Build outputs, local secrets, proprietary dumps, and generated runtime data are excluded from version control.
-- The repository keeps project documentation close to the implementation.
 
 ## Technology
 
@@ -36,4 +28,4 @@ Original source code is available under the MIT License. Third-party dependencie
 
 Автономный диспетчер виртуального телеканала: планирует эфир, управляет OBS, создаёт оверлеи и ведёт историю вещания.
 
-Репозиторий оформлен как портфолио: локальные секреты, результаты сборки и сторонние игровые/медиафайлы не должны попадать в Git.
+Создавался для ретро-канала в стиле REN-TV начала нулевых годов.
